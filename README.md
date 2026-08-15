@@ -85,17 +85,49 @@ earth is worse than an absent one.
 ## Running it
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e . -e ../s3Dgraphy
+python3 -m venv .venv
+.venv/bin/pip install -e . -e ../s3Dgraphy
 .venv/bin/uvicorn app.main:app --reload --port 8010
+curl -s localhost:8010/health | python3 -m json.tool
 ```
 
-In the dev-stack (with MinIO, Keycloak and the rest):
+A bare local run answers `"auth": "dev-no-auth"`, `"container_store": "memory"`
+and `"index": "sqlite (:memory:)"` — correct for a laptop, and **said out loud**
+rather than assumed. A catalogue whose studies live in a process has no studies.
+
+Tests:
+
+```bash
+.venv/bin/python -m pytest -q      # 43 passed (42 + 1 skipped without a CouchDB)
+```
+
+The one that skips is the CouchDB parity test: it measures that the deploy index
+answers *exactly* like the dev one, and it says so by name when there is no
+CouchDB to measure against. Start one to run it (the dev-stack `couchdb`
+profile).
+
+In the dev-stack, with MinIO, Keycloak and the rest around it:
 
 ```bash
 cd ../em-server/dev-stack
-docker-compose --env-file .env.dev -f docker-compose.dev.yml up -d em-catalog
-python smoke_catalog.py
+docker-compose --env-file .env.dev -f docker-compose.dev.yml up -d --build em-catalog
+python smoke_catalog.py            # 30 checks, live
 ```
+
+The smoke is where the architecture is proved rather than described: it registers
+two studies, **opens the bucket itself** to check the containers are really
+there, searches, groups by digital twin, fetches the container back byte-for-byte,
+checks that `/ttl` hides a deletion the `em.json` still carries, exercises the
+visibility rule — and then **empties the index and rebuilds it** from the object
+store.
+
+> The container in the dev-stack runs `uvicorn` **without** `--reload`: the code
+> is mounted, but a change needs
+> `docker-compose --env-file .env.dev -f docker-compose.dev.yml restart em-catalog`.
+
+**Where this sits in the wider system:**
+[`ARCHITECTURE-SYSTEM.md`](../em-server/docs/ARCHITECTURE-SYSTEM.md) ·
+**deploying it:** [`DEPLOYMENT.md`](../em-server/docs/DEPLOYMENT.md).
 
 ## Configuration
 
