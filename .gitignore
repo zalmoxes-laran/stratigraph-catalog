@@ -1,0 +1,24 @@
+# local Claude Code tooling — never committed
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# The dev index. It is a PROJECTION — `POST /catalog/reindex` rebuilds it from
+# the containers in the object store — so committing one would be committing a
+# cache, and a stale one at that. If this file ever needs an entry for the
+# STUDIES themselves, something has gone wrong: the studies live in the object
+# store, not on this process's disk.
+*.sqlite
+*.sqlite3
+em-catalog.db
+
+# macOS
+.DS_Store

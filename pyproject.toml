@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "em-catalog"
+version = "0.1.0.dev0"
+description = "The StratiGraph Catalog — REFERENCE implementation of the study contract (studies are em.json containers; the index is derived)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Emanuel Demetrescu", email = "emanuel.demetrescu@cnr.it" }]
+keywords = ["extended matrix", "catalog", "heritage digital twin", "fastapi"]
+
+# Same three-line shape as em-server, and for the same reason: this service adds
+# a transport and an index, and nothing else. Every domain question — what a
+# study IS, how to read a container, how to project it to RDF — is answered by
+# s3Dgraphy, which is why it is the first dependency and not an implementation
+# detail.
+dependencies = [
+    # `[rdf]` is what makes `/catalog/study/{id}/ttl` a real endpoint rather than
+    # an honest 501. `[geo]` is NOT taken: this service never reprojects — it
+    # reads a site position that is already in WGS84 and hands it to the index.
+    "s3dgraphy[rdf]>=1.6.0.dev13",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    # Auth is a HARD dependency for the same reason as in em-server: a build that
+    # cannot verify a token is a build that comes up open on shared
+    # infrastructure. See app/auth.py.
+    "PyJWT[crypto]>=2.8",
+    # The container store. NOT optional: the truth of a study lives in the object
+    # store, and a build that could not reach it would keep studies in a process
+    # that dies. The in-memory store exists for tests and says so.
+    "minio>=7.2",
+]
+
+[project.optional-dependencies]
+# The deploy index. SQLite is in the standard library, so the DEV index needs
+# nothing; CouchDB is an HTTP API and the implementation uses urllib — the extra
+# exists to name the intent, not to install a client.
+couchdb = []
+dev = ["pytest>=7", "httpx>=0.27"]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

@@ -1,0 +1,100 @@
+"""Fixtures shared by the suite: real containers, a fresh store, a fresh index.
+
+The containers are built with s3Dgraphy itself rather than hand-written JSON. A
+catalogue whose tests fed it documents nobody's tools produce would prove that
+the catalogue works on the catalogue's idea of a study.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+import pytest
+
+_REPO = pathlib.Path(__file__).resolve().parent.parent
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+# the s3Dgraphy CHECKOUT wins over any installed wheel — `study_metadata` is new
+_CHECKOUT = _REPO.parent / "s3Dgraphy" / "src"
+if _CHECKOUT.is_dir():
+    sys.path.insert(0, str(_CHECKOUT))
+
+from s3dgraphy.container import build_container, container_of   # noqa: E402
+from s3dgraphy.graph import Graph                               # noqa: E402
+from s3dgraphy.importer.emjson_importer import (                # noqa: E402
+    materialize_graph_scope)
+from s3dgraphy.nodes import StratigraphicUnit                   # noqa: E402
+from s3dgraphy.nodes.hdt_node import HDTNode                    # noqa: E402
+from s3dgraphy.nodes.heritage_entity_node import (              # noqa: E402
+    HeritageEntityNode)
+
+ORCID = "0000-0002-1825-0097"
+
+
+def study_document(graph_id="sarmizegetusa-2026", *, title="Sarmizegetusa 2026",
+                   author="Emanuel Demetrescu", orcid=ORCID,
+                   license="CC-BY-4.0", visibility="public",
+                   hdt=("hdt_sarm", "Sarmizegetusa HDT",
+                        "https://example.org/h/sarm"),
+                   entity=("hc1_sarm", "Sarmizegetusa Regia"),
+                   units=("US 1", "US 2"), site=(45.62, 23.31)):
+    """One study, as a container DOCUMENT — the shape a catalogue receives."""
+    graph = Graph(graph_id=graph_id)
+    graph.name = {"default": title}
+    for index, name in enumerate(units, start=1):
+        graph.add_node(StratigraphicUnit(f"{graph_id}-us{index}", name=name))
+    root = materialize_graph_scope(graph, author=author, license=license,
+                                   em_id=graph_id.upper(), orcid=orcid)
+    if site:
+        root.data["site_position"] = {"lat": site[0], "lon": site[1],
+                                      "crs": "EPSG:4326"}
+    if hdt:
+        graph.add_node(HDTNode(hdt[0], name=hdt[1], heritage_entity_iri=hdt[2]))
+    if entity:
+        graph.add_node(HeritageEntityNode(entity[0], name=entity[1],
+                                          entity_kind="site"))
+    container = container_of(graph)
+    container.header = {"visibility": visibility, "title": title}
+    return build_container(container)
+
+
+@pytest.fixture()
+def public_study():
+    return study_document()
+
+
+@pytest.fixture()
+def restricted_study():
+    return study_document(graph_id="scavo-in-corso", title="Scavo in corso",
+                          author="Tizia Caia", orcid=None,
+                          license="CC-BY-NC-4.0", visibility="restricted",
+                          hdt=("hdt_sarm", "Sarmizegetusa HDT",
+                               "https://example.org/h/sarm"),
+                          entity=None, units=("US 10",), site=None)
+
+
+@pytest.fixture()
+def other_twin_study():
+    return study_document(graph_id="colosseo-2024", title="Colosseo 2024",
+                          author="Sempronio", orcid=None, license="CC-BY-4.0",
+                          visibility="public",
+                          hdt=("hdt_colosseo", "Colosseo HDT",
+                               "https://example.org/h/colosseo"),
+                          entity=("hc1_colosseo", "Colosseo"),
+                          units=("US 100",), site=(41.89, 12.49))
+
+
+@pytest.fixture()
+def client(monkeypatch):
+    """The service with a store and an index nobody else wrote."""
+    from app import main as main_module
+    from app.index import SqliteCatalogIndex
+    from app.store import InMemoryContainerStore
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(main_module, "STORE", InMemoryContainerStore())
+    monkeypatch.setattr(main_module, "INDEX", SqliteCatalogIndex(":memory:"))
+    with TestClient(main_module.app) as test_client:
+        yield test_client
