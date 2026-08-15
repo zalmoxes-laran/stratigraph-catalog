@@ -220,3 +220,82 @@ def test_removing_a_study_removes_both_halves(client, public_study):
     assert answer["removed"] == {"container": True, "index": True}
     assert client.get(f"/catalog/study/{body['id']}").status_code == 404
     assert client.delete(f"/catalog/study/{body['id']}").status_code == 404
+
+
+# ── DP-79 P3 · the study, read as a story ────────────────────────────────────
+
+def _with_narrative(doc, *, blocks=None):
+    """The fixture study, plus a narrative pointing at what it contains."""
+    graph_id = doc["active_graph_id"]
+    section = doc["graphs"][graph_id]
+    unit = next(n["id"] for n in section["nodes"] if n["node_type"] == "US")
+    section["nodes"].append({
+        "id": "narr-1", "node_type": "narrative", "name": "Lo studio, raccontato",
+        "data": {"chapters": [{"title": "Un capitolo", "blocks": blocks or [
+            {"block_type": "prose", "text": "Il muro è documentato."},
+            {"block_type": "embed", "ref": unit, "view_type": "us"},
+        ]}]},
+    })
+    return doc
+
+
+def test_the_reading_page_is_served_and_is_the_built_bundle(client):
+    answer = client.get("/catalog/reader.html")
+    if answer.status_code == 501:
+        import pytest
+        pytest.skip("no reading page bundled — run `npm run build:reader` in EMStudio")
+    assert answer.status_code == 200
+    assert answer.headers["content-type"].startswith("text/html")
+    # it is the page, not a rendering of a study: it carries no study data
+    assert "StratiGraph" in answer.text
+    assert "viewer" in answer.text.lower()
+
+
+def test_a_public_study_is_readable_without_a_token(client, public_study):
+    body = _register(client, _with_narrative(public_study))
+    answer = client.get(f"/catalog/study/{body['id']}/narrative",
+                        follow_redirects=False)
+    if answer.status_code == 501:
+        import pytest
+        pytest.skip("no reading page bundled in this checkout")
+    assert answer.status_code == 200, answer.text
+    # the page is handed the PUBLIC url of its own container to fetch
+    assert "/catalog/reader.html" in answer.text, \
+        "the link must be ROOTED — `./reader.html` resolves against the " \
+        "study path and 404s (measured in a browser)"
+    assert "emjson" in answer.text
+    assert body["id"].replace(":", "%3A") in answer.text or body["id"] in answer.text
+
+
+def test_a_restricted_study_is_not_readable_without_one(client, realm,
+                                                        public_study,
+                                                        restricted_study):
+    """The dissemination surface obeys the study, like every other route: a
+    study nobody published is not readable just because the reading page is."""
+    head = {"Authorization": f"Bearer {realm()}"}
+    a = client.post("/catalog/studies", json=_with_narrative(public_study),
+                    headers=head)
+    b = client.post("/catalog/studies", json=_with_narrative(restricted_study),
+                    headers=head)
+    assert a.status_code == 201 and b.status_code == 201
+    public_id, restricted_id = a.json()["id"], b.json()["id"]
+
+    first = client.get(f"/catalog/study/{public_id}/narrative")
+    if first.status_code == 501:
+        import pytest
+        pytest.skip("no reading page bundled in this checkout")
+    assert first.status_code == 200
+    assert client.get(f"/catalog/study/{restricted_id}/narrative"
+                      ).status_code == 401
+    assert client.get(f"/catalog/study/{restricted_id}/narrative",
+                      headers=head).status_code == 200
+
+
+def test_the_reading_page_itself_needs_no_token(client, realm):
+    """It is a program, not a study: it carries no data, and what it reads is
+    behind the visibility rule rather than in the page."""
+    answer = client.get("/catalog/reader.html")
+    if answer.status_code == 501:
+        import pytest
+        pytest.skip("no reading page bundled in this checkout")
+    assert answer.status_code == 200

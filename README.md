@@ -54,6 +54,33 @@ The difference is silent until the day it costs somebody an afternoon. And
 `publish` mode means tombstones do not travel: a deleted US must be **absent**
 from a disseminated projection, not marked in it (`s3dgraphy.dissemination`).
 
+## Two renderings of one story — the snapshot and the live view
+
+A narrative's embeds mean *whatever the graph says now*. That is what makes it an
+editing surface, and it is exactly what a published text cannot be. So there are
+**two** renderings, and the difference between them is the point rather than an
+implementation detail:
+
+| | **snapshot** | **live** |
+|---|---|---|
+| what | `POST /export-narrative?format=html` (via the bridge), or Word / LaTeX | `GET /catalog/study/{id}/narrative` |
+| when the embeds resolve | **once**, at export | **at every render** |
+| the 3D | a placeholder that names what it stands for | navigable |
+| a renamed unit | keeps the old name — it is a snapshot | says the new name |
+| what it is for | e-mail, a deliverable, an archive copy, a citation | reading the study as it stands |
+| where it lives | a file on somebody's disk | a URL |
+
+Both come from the **same NarrativeNode** and go through the **same rendering
+engine** (`narrative.ts` + `narrative-embeds.ts` in EMStudio; the static one via
+`s3dgraphy.bake_narrative`). There is deliberately no third traversal of the
+graph: three renderings built separately would eventually disagree about what
+the narrative said, and the disagreement would surface as somebody citing a
+sentence the study no longer makes.
+
+The static file **says it is a snapshot**, in its own footer; the live page says
+it is live, in its own. A reader who is handed one of them has no other way to
+know which they are looking at.
+
 ## API
 
 ```
@@ -63,6 +90,8 @@ GET    /catalog/hdt/{hc2}                       one heritage object, its studies
 GET    /catalog/study/{id}                      the card
 GET    /catalog/study/{id}/emjson               the container
 GET    /catalog/study/{id}/ttl                  the published projection
+GET    /catalog/study/{id}/narrative           the study READ as a story (live)
+GET    /catalog/viewer.html                    the reading page itself (a program, not a study)
 GET    /catalog/study/{id}/open?app=emstudio|blender|heriverse
 POST   /catalog/studies?study_id=               register / replace          [token]
 DELETE /catalog/study/{id}                      withdraw                    [token]

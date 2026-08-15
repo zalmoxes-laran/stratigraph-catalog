@@ -98,3 +98,60 @@ def client(monkeypatch):
     monkeypatch.setattr(main_module, "INDEX", SqliteCatalogIndex(":memory:"))
     with TestClient(main_module.app) as test_client:
         yield test_client
+
+
+# ── an enforcing realm, shared ───────────────────────────────────────────────
+#
+# Two modules need it (the visibility tests and the dissemination ones), and a
+# fixture two modules need belongs where pytest looks for shared ones.
+#
+# It mints an RSA key and signs real tokens: everything but the JWKS fetch is
+# the production path, so what is measured is the verifier and not a stub of it.
+
+import datetime                                                  # noqa: E402
+
+jwt = pytest.importorskip("jwt")
+pytest.importorskip("cryptography")
+
+from app.auth import OidcSettings, authenticator                 # noqa: E402
+
+ISSUER = "https://keycloak.example/realms/em-dev"
+AUDIENCE = "em-catalog"
+KID = "test-key-1"
+
+
+@pytest.fixture()
+def realm(monkeypatch):
+    """An enforcing authenticator whose signing key is one this test owns."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    class _Keys:
+        def key_for(self, kid):
+            if kid != KID:
+                raise AssertionError(f"unexpected kid {kid!r}")
+            return key.public_key()
+
+    previous_settings, previous_jwks = authenticator.settings, authenticator._jwks
+    authenticator.settings = OidcSettings(
+        issuer=ISSUER, audience=AUDIENCE,
+        jwks_uri=f"{ISSUER}/protocol/openid-connect/certs")
+    authenticator._jwks = _Keys()
+
+    def token(*, audience=AUDIENCE, issuer=ISSUER, expired=False):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        claims = {
+            "sub": "0000-0002-1825-0097", "iss": issuer, "aud": audience,
+            "exp": now + datetime.timedelta(minutes=-5 if expired else 30),
+            "iat": now - datetime.timedelta(minutes=1),
+            "preferred_username": "dev",
+        }
+        return jwt.encode(claims, key, algorithm="RS256",
+                          headers={"kid": KID})
+
+    try:
+        yield token
+    finally:
+        authenticator.settings = previous_settings
+        authenticator._jwks = previous_jwks

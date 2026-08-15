@@ -50,6 +50,7 @@ disseminated projection (`s3dgraphy.dissemination`).
 from __future__ import annotations
 
 import os
+import urllib.parse
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -466,6 +467,114 @@ def get_study_ttl(study_id: str, request: Request,
         content=ttl, media_type="text/turtle",
         headers={"Content-Disposition":
                  f'attachment; filename="{study_id.replace(":", "_")}.ttl"'})
+
+
+@catalog_public.get("/study/{study_id}/narrative", tags=["retrieval"],
+                    responses={200: {"content": {"text/html": {}}}})
+def read_study(study_id: str, request: Request,
+               narrative: Optional[str] = Query(
+                   default=None,
+                   description="which narrative, when the study holds several"),
+               token: Optional[str] = Query(default=None)) -> Response:
+    """The study, **read as a story** — the dissemination surface (D2.2 T6.3).
+
+    Serves EMStudio's standalone viewer pointed at this study's container. Not a
+    second rendering of anything: the page is `reader.html`, which calls the same
+    narrative engine the editor calls, so an embed here means what it means
+    there — a REFERENCE, resolved now.
+
+    **Live, and that is the point.** The HTML export is a snapshot somebody can
+    e-mail; this is the study as it stands, with the 3D navigable and the matrix
+    saying what the graph says today. Same NarrativeNode, two renderings.
+
+    The visibility rule is the study's, as everywhere else: a `public` study is
+    read without a token — that is what publishing means — and anything else is
+    401 without one. The token is passed through to the page in the URL because a
+    browser fetching a document cannot set a header; the page uses it for that
+    one request and does not keep it.
+
+    501 when this deployment ships no viewer: an honest answer, because the
+    alternative is a blank page that looks like the study is empty.
+    """
+    card = _card_or_404(study_id)
+    _require_visible(card, request, token)
+
+    page = _viewer_page()
+    if page is None:
+        raise HTTPException(
+            status_code=501,
+            detail="this deployment has no reading page bundled: build it "
+                   "with `npm run build:reader` in EMStudio and point "
+                   "EM_CATALOG_READER at the resulting reader.html")
+
+    # The page is handed its own address to fetch from — the PUBLIC form, as
+    # everywhere (docs/URL-TOPOLOGY.md): it is read by somebody else's browser.
+    query = f"?emjson={urllib.parse.quote(_container_url(request, study_id), safe='')}"
+    if narrative:
+        query += f"&narrative={urllib.parse.quote(narrative, safe='')}"
+    if token:
+        query += f"&token={urllib.parse.quote(token, safe='')}"
+    # A meta-refresh rather than a rewritten bundle: the viewer is a built
+    # artefact and this service does not get to edit it. Two lines of HTML, and
+    # the browser lands on the page with its parameters.
+    #
+    # ROOTED, not relative. `./reader.html` resolves against
+    # `/catalog/study/<id>/` and asks for a page that is not there — measured in
+    # a browser, as a 404 on a route that plainly exists. The prefix is the
+    # router's own, so this is correct behind Caddy's `/catalog/*` too.
+    target = f"/catalog/reader.html{query}"
+    redirect = (
+        "<!doctype html><meta charset=\"utf-8\">"
+        f"<meta http-equiv=\"refresh\" content=\"0; url={_esc_attr(target)}\">"
+        f"<title>{_esc_attr(str(card.get('title') or study_id))}</title>"
+        f"<p>Apro lo studio… <a href=\"{_esc_attr(target)}\">continua</a></p>"
+    )
+    return Response(content=redirect, media_type="text/html; charset=utf-8")
+
+
+@catalog_public.get("/reader.html", tags=["retrieval"],
+                    responses={200: {"content": {"text/html": {}}}})
+def reader_page() -> Response:
+    """The viewer bundle itself — one self-contained file, served as it was built.
+
+    Public with no token, and deliberately: it is a program, not a study. It
+    carries no data at all; what it reads comes from the `?emjson=` it is given,
+    and THAT is behind the visibility rule.
+    """
+    page = _viewer_page()
+    if page is None:
+        raise HTTPException(status_code=501,
+                            detail="no reading page bundled in this deployment")
+    return Response(content=page, media_type="text/html; charset=utf-8",
+                    headers={"Cache-Control": "public, max-age=300"})
+
+
+def _esc_attr(value: str) -> str:
+    return value.replace("&", "&amp;").replace('"', "&quot;")
+
+
+def _viewer_page() -> Optional[str]:
+    """The built viewer, or None.
+
+    Looked for where a deployment would put it (`EM_CATALOG_READER`) and, failing
+    that, in the sibling EMStudio checkout — which is what makes this work in the
+    dev stack without a build step in this repo. Read on every request rather
+    than cached: in development the file is rebuilt while the service runs, and a
+    cached copy would show yesterday's viewer with no way to tell.
+    """
+    import pathlib
+
+    configured = (os.environ.get("EM_CATALOG_READER") or "").strip()
+    candidates = [pathlib.Path(configured)] if configured else []
+    here = pathlib.Path(__file__).resolve().parent.parent
+    candidates.append(here.parent / "EMStudio" / "frontend" / "dist" / "reader.html")
+    for path in candidates:
+        try:
+            if path.is_file():
+                return path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+    return None
 
 
 @catalog_public.get("/study/{study_id}/open", tags=["retrieval"])
