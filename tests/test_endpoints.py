@@ -240,8 +240,8 @@ def _with_narrative(doc, *, blocks=None):
 
 
 def test_the_reading_page_is_served_and_is_the_built_bundle(client):
-    answer = client.get("/catalog/reader.html")
-    if answer.status_code == 501:
+    answer = client.get("/catalog/reader/reader.html")
+    if answer.status_code == 404:
         import pytest
         pytest.skip("no reading page bundled — run `npm run build:reader` in EMStudio")
     assert answer.status_code == 200
@@ -249,6 +249,89 @@ def test_the_reading_page_is_served_and_is_the_built_bundle(client):
     # it is the page, not a rendering of a study: it carries no study data
     assert "StratiGraph" in answer.text
     assert "viewer" in answer.text.lower()
+
+
+def test_the_reading_page_gets_its_assets_from_the_same_mount(client):
+    """The reader is a shell plus `assets/`, and a shell whose assets 404 is a
+    blank page that reads like an empty study.
+
+    So: read what the shell actually asks for, and ask for it. Serving the shell
+    without serving what it names is precisely the failure this route had — it
+    was one file when it was written, and it stopped being one."""
+    import re
+
+    shell = client.get("/catalog/reader/reader.html")
+    if shell.status_code == 404:
+        import pytest
+        pytest.skip("no reading page bundled in this checkout")
+    refs = [r for r in re.findall(r'(?:src|href)="([^"]+)"', shell.text)
+            if not r.startswith("data:")]
+    assert refs, "the shell references its bundle"
+    for ref in refs:
+        # relative, so the DIRECTORY it was served from decides where they land
+        assert ref.startswith("./"), ref
+        asset = client.get(f"/catalog/reader/{ref[2:]}")
+        assert asset.status_code == 200, f"{ref} → {asset.status_code}"
+        assert len(asset.content) > 0
+
+
+def test_the_old_single_file_address_forwards_instead_of_serving_a_broken_page(
+        client):
+    """`/catalog/reader.html` is where the page used to be. A shell served from
+    there would ask for `/catalog/assets/…` and get nothing — so it forwards."""
+    answer = client.get("/catalog/reader.html", follow_redirects=False)
+    if answer.status_code == 501:
+        import pytest
+        pytest.skip("no reading page bundled in this checkout")
+    assert answer.status_code == 307
+    assert answer.headers["location"] == "/catalog/reader/reader.html"
+    # …and the query survives, or a bookmarked reading link loses its study
+    with_query = client.get("/catalog/reader.html?emjson=http%3A%2F%2Fx%2Fy",
+                            follow_redirects=False)
+    assert with_query.headers["location"].endswith(
+        "/catalog/reader/reader.html?emjson=http%3A%2F%2Fx%2Fy")
+
+
+def test_without_a_built_reader_the_answer_is_an_honest_501(client, monkeypatch,
+                                                            public_study):
+    """The one thing that must not happen is a blank page. A deployment with no
+    reader says so, and says what to build."""
+    from app import main as main_module
+
+    body = _register(client, _with_narrative(public_study))
+    monkeypatch.setattr(main_module, "READER_DIST",
+                        main_module.pathlib.Path("/nonexistent/dist"))
+    answer = client.get(f"/catalog/study/{body['id']}/narrative")
+    assert answer.status_code == 501
+    detail = answer.json()["detail"]
+    assert "build:reader" in detail and "EM_CATALOG_READER" in detail
+    assert client.get("/catalog/health").json()["capabilities"][
+        "reading_page"] is False, "…and health says so before anybody tries"
+    # the page itself says the same thing, and the ASSETS say 404 — never a 500.
+    # Measured, and it was: `check_dir=False` does not stop Starlette from
+    # stat'ing the directory on the first request and raising.
+    assert client.get("/catalog/reader/reader.html").status_code == 501
+    # …and the study is still served: no reader is not no catalogue
+    assert client.get(f"/catalog/study/{body['id']}/emjson").status_code == 200
+
+
+def test_a_dist_that_is_not_there_is_a_404_and_not_a_crash():
+    """The mount over a directory nobody built.
+
+    This one is measured rather than assumed, because the flag misleads:
+    `check_dir=False` skips the check in the CONSTRUCTOR only — Starlette stats
+    the directory again on the first request and raises `RuntimeError`, which
+    reaches the client as a 500 with a stack trace. A service whose only fault
+    is having no frontend must not look like a broken one."""
+    from app.main import READER_MOUNT, _ReaderFiles
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    bare = FastAPI()
+    bare.mount(READER_MOUNT, _ReaderFiles(directory="/nonexistent-dist",
+                                          check_dir=False, html=False))
+    with TestClient(bare) as probe:
+        assert probe.get(f"{READER_MOUNT}/assets/reader.js").status_code == 404
 
 
 def test_a_public_study_is_readable_without_a_token(client, public_study):
@@ -260,11 +343,19 @@ def test_a_public_study_is_readable_without_a_token(client, public_study):
         pytest.skip("no reading page bundled in this checkout")
     assert answer.status_code == 200, answer.text
     # the page is handed the PUBLIC url of its own container to fetch
-    assert "/catalog/reader.html" in answer.text, \
-        "the link must be ROOTED — `./reader.html` resolves against the " \
-        "study path and 404s (measured in a browser)"
+    assert "/catalog/reader/reader.html" in answer.text, \
+        "the link must be ROOTED and INSIDE the mount — `./reader.html` " \
+        "resolves against the study path and 404s (measured in a browser), " \
+        "and `/catalog/reader.html` would leave the shell resolving its own " \
+        "assets against `/catalog/`"
     assert "emjson" in answer.text
     assert body["id"].replace(":", "%3A") in answer.text or body["id"] in answer.text
+    # …and that url is SAME-ORIGIN. An absolute one names a single origin, and
+    # the same page is reached through Caddy on https and on the container port
+    # directly: measured in Chrome, `http://localhost:8010/…` on an https page
+    # is blocked as mixed content and the study never loads.
+    assert "http%3A%2F%2F" not in answer.text and "https%3A%2F%2F" not in answer.text
+    assert "emjson=%2Fcatalog%2Fstudy%2F" in answer.text
 
 
 def test_a_restricted_study_is_not_readable_without_one(client, realm,
@@ -294,8 +385,8 @@ def test_a_restricted_study_is_not_readable_without_one(client, realm,
 def test_the_reading_page_itself_needs_no_token(client, realm):
     """It is a program, not a study: it carries no data, and what it reads is
     behind the visibility rule rather than in the page."""
-    answer = client.get("/catalog/reader.html")
-    if answer.status_code == 501:
+    answer = client.get("/catalog/reader/reader.html")
+    if answer.status_code == 404:
         import pytest
         pytest.skip("no reading page bundled in this checkout")
     assert answer.status_code == 200

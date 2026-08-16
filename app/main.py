@@ -50,12 +50,15 @@ disseminated projection (`s3dgraphy.dissemination`).
 from __future__ import annotations
 
 import os
+import pathlib
 import urllib.parse
 import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import (APIRouter, Body, FastAPI, HTTPException, Query, Request,
                      Response)
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .auth import AuthDependency, authenticator
@@ -149,6 +152,10 @@ def _health() -> Health:
             # /ttl that quietly carries tombstones
             "ttl_publish_mode": importable("s3dgraphy.dissemination"),
             "hdt_view": True,
+            # whether `/study/{id}/narrative` will answer with a page or with an
+            # honest 501 — a client can read it here instead of discovering it
+            # by trying, and an operator can tell a missing mount from a bug
+            "reading_page": _reader_shell() is not None,
         },
         auth=authenticator.settings.describe(),
         container_store=store_describe(STORE),
@@ -202,7 +209,17 @@ def _container_url(request: Request, study_id: str) -> str:
     """
     configured = (os.environ.get("EM_CATALOG_PUBLIC_URL") or "").strip()
     base = configured.rstrip("/") if configured else str(request.base_url).rstrip("/")
-    return f"{base}/catalog/study/{study_id}/emjson"
+    return f"{base}{_container_path(study_id)}"
+
+
+def _container_path(study_id: str) -> str:
+    """The same container, named RELATIVE to whatever origin asked.
+
+    For the one caller that is already on this origin: the reading page, which
+    this service just served. See `read_study` for why naming an absolute origin
+    there is a bug and not a style.
+    """
+    return f"/catalog/study/{study_id}/emjson"
 
 
 def _require_visible(card: Dict[str, Any], request: Request,
@@ -499,17 +516,24 @@ def read_study(study_id: str, request: Request,
     card = _card_or_404(study_id)
     _require_visible(card, request, token)
 
-    page = _viewer_page()
-    if page is None:
-        raise HTTPException(
-            status_code=501,
-            detail="this deployment has no reading page bundled: build it "
-                   "with `npm run build:reader` in EMStudio and point "
-                   "EM_CATALOG_READER at the resulting reader.html")
+    if _reader_shell() is None:
+        raise HTTPException(status_code=501, detail=READER_MISSING)
 
-    # The page is handed its own address to fetch from — the PUBLIC form, as
-    # everywhere (docs/URL-TOPOLOGY.md): it is read by somebody else's browser.
-    query = f"?emjson={urllib.parse.quote(_container_url(request, study_id), safe='')}"
+    # The page is handed the address of its own container — SAME-ORIGIN, and
+    # that is a correction measured in a browser rather than a preference.
+    #
+    # The absolute public form (`_container_url`, what `/open` hands to other
+    # software) names one origin, and the reader is served from whichever origin
+    # the reader was asked for. Reached through Caddy on https, a page told to
+    # fetch `http://localhost:8010/…` is blocked as mixed content and shows
+    # «Studio irraggiungibile» over a bundle that loaded perfectly — measured in
+    # Chrome, and it would have been an asset 404 moved one step along.
+    #
+    # A root-relative path cannot be wrong: this service SERVED the page, so its
+    # own study is at its own origin, whichever one the reader used to get here.
+    # Copy the resulting link and it still resolves, because the copied URL
+    # carries the origin with it.
+    query = f"?emjson={urllib.parse.quote(_container_path(study_id), safe='')}"
     if narrative:
         query += f"&narrative={urllib.parse.quote(narrative, safe='')}"
     if token:
@@ -522,7 +546,12 @@ def read_study(study_id: str, request: Request,
     # `/catalog/study/<id>/` and asks for a page that is not there — measured in
     # a browser, as a 404 on a route that plainly exists. The prefix is the
     # router's own, so this is correct behind Caddy's `/catalog/*` too.
-    target = f"/catalog/reader.html{query}"
+    #
+    # …and it points INSIDE the mount, not beside it (see `READER_MOUNT`). The
+    # shell asks for `./assets/…`, so the directory it is served FROM is what
+    # decides whether those requests land: `/catalog/reader.html` would resolve
+    # them against `/catalog/` and 404 every one.
+    target = f"{READER_MOUNT}/reader.html{query}"
     redirect = (
         "<!doctype html><meta charset=\"utf-8\">"
         f"<meta http-equiv=\"refresh\" content=\"0; url={_esc_attr(target)}\">"
@@ -532,49 +561,120 @@ def read_study(study_id: str, request: Request,
     return Response(content=redirect, media_type="text/html; charset=utf-8")
 
 
-@catalog_public.get("/reader.html", tags=["retrieval"],
+@catalog_public.get("/reader/reader.html", tags=["retrieval"],
                     responses={200: {"content": {"text/html": {}}}})
-def reader_page() -> Response:
-    """The viewer bundle itself — one self-contained file, served as it was built.
+def reader_shell() -> Response:
+    """The reading page itself, at the root of its own directory.
 
-    Public with no token, and deliberately: it is a program, not a study. It
-    carries no data at all; what it reads comes from the `?emjson=` it is given,
-    and THAT is behind the visibility rule.
+    A route rather than a static file, for one reason: when the reader is not
+    built, this says **501 and how to build it** — the mount below would say 404,
+    which is what a wrong URL says, and the difference between "you asked for
+    something that is not here" and "this deployment does not ship that" is the
+    difference between a bug report and a build command.
+
+    Everything the page then asks for (`./assets/…`) IS served by the mount:
+    those are files, and 404 is the right word for a missing one.
+
+    Public with no token, deliberately: it is a program, not a study. It carries
+    no data — what it reads comes from the `?emjson=` it is handed, and THAT is
+    behind the visibility rule.
     """
-    page = _viewer_page()
-    if page is None:
-        raise HTTPException(status_code=501,
-                            detail="no reading page bundled in this deployment")
-    return Response(content=page, media_type="text/html; charset=utf-8",
-                    headers={"Cache-Control": "public, max-age=300"})
+    shell = _reader_shell()
+    if shell is None:
+        raise HTTPException(status_code=501, detail=READER_MISSING)
+    return FileResponse(shell, media_type="text/html; charset=utf-8",
+                        headers={"Cache-Control": "public, max-age=60"})
+
+
+@catalog_public.get("/reader.html", tags=["retrieval"], include_in_schema=False)
+def reader_page_legacy(request: Request) -> Response:
+    """Where the reading page USED to be, back when it was one file.
+
+    It is not one file any more (see `READER_MOUNT`), and a shell served from
+    here would ask for `/catalog/assets/…` — nothing is there. So this forwards
+    to the real one, query and all, instead of returning a page that renders
+    blank and looks like an empty study.
+
+    Public with no token, as before, and deliberately: it is a program, not a
+    study. What it reads comes from the `?emjson=` it is given, and THAT is
+    behind the visibility rule.
+    """
+    if _reader_shell() is None:
+        raise HTTPException(status_code=501, detail=READER_MISSING)
+    query = request.url.query
+    return RedirectResponse(f"{READER_MOUNT}/reader.html"
+                            + (f"?{query}" if query else ""), status_code=307)
 
 
 def _esc_attr(value: str) -> str:
     return value.replace("&", "&amp;").replace('"', "&quot;")
 
 
-def _viewer_page() -> Optional[str]:
-    """The built viewer, or None.
+# ── the reading page is a DIRECTORY, not a file ───────────────────────────────
+#
+# It used to be one self-contained HTML that this service read and returned as a
+# string. That stopped being true when the reader gave up `viteSingleFile`: the
+# single-file tax is what made the 3D engine +800 kB of inlined base64 instead
+# of a chunk fetched only when a model appears, and the reader is SERVED, so it
+# never needed to be one file — the editor does, because it opens off a USB
+# stick in a trench.
+#
+# The consequence is this whole section. `dist/reader.html` is a ~1.5 kB shell
+# that asks for `./assets/reader-*.{js,css}` (and, when a model appears,
+# `./three.module-*.js` beside them), all resolved against the URL DIRECTORY the
+# shell was served from. Shell and assets therefore have to be served from the
+# same directory — which means serving the dist AS a directory, not reading one
+# file out of it.
 
-    Looked for where a deployment would put it (`EM_CATALOG_READER`) and, failing
-    that, in the sibling EMStudio checkout — which is what makes this work in the
-    dev stack without a build step in this repo. Read on every request rather
-    than cached: in development the file is rebuilt while the service runs, and a
-    cached copy would show yesterday's viewer with no way to tell.
+#: The public prefix the reading page lives under. The shell sits at its root
+#: (`…/reader/reader.html`) precisely so `./assets/…` resolves inside the mount.
+READER_MOUNT = "/catalog/reader"
+
+#: One sentence for the 501, said the same way wherever the page is missing:
+#: what to build, and where to point it.
+READER_MISSING = ("this deployment has no reading page bundled: build it with "
+                  "`npm run build:reader` in EMStudio and point "
+                  "EM_CATALOG_READER at the resulting dist/ directory")
+
+
+def _reader_dist() -> pathlib.Path:
+    """Where the built reader lives — configured, or the sibling checkout.
+
+    `EM_CATALOG_READER` names the **directory** (`…/frontend/dist`). A path that
+    ends in `.html` is accepted as well and read as "the shell", for deployments
+    configured when this was one file: its parent is the dist, which is the same
+    answer — a rename that silently 501'd would be a poor way to say so.
+
+    The sibling checkout is the fallback, which is what makes this work in a
+    developer's tree with no build step in this repo.
     """
-    import pathlib
-
     configured = (os.environ.get("EM_CATALOG_READER") or "").strip()
-    candidates = [pathlib.Path(configured)] if configured else []
+    if configured:
+        path = pathlib.Path(configured)
+        return path.parent if path.suffix == ".html" else path
     here = pathlib.Path(__file__).resolve().parent.parent
-    candidates.append(here.parent / "EMStudio" / "frontend" / "dist" / "reader.html")
-    for path in candidates:
-        try:
-            if path.is_file():
-                return path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-    return None
+    return here.parent / "EMStudio" / "frontend" / "dist"
+
+
+#: Resolved once, because a mount IS a route and routes are built at startup.
+#: What is not cached is the content: `StaticFiles` stats the file on every
+#: request, so a reader rebuilt while the service runs is served immediately —
+#: the property the old read-per-request had, kept.
+READER_DIST = _reader_dist()
+
+
+def _reader_shell() -> Optional[pathlib.Path]:
+    """The shell, or None — asked on every request, never remembered.
+
+    A deployment can be started before the reader is built (the dev stack is,
+    routinely), and a remembered `None` would answer 501 for the rest of the day
+    to somebody who has since built it.
+    """
+    shell = READER_DIST / "reader.html"
+    try:
+        return shell if shell.is_file() else None
+    except OSError:  # pragma: no cover — an unreadable mount is still "no page"
+        return None
 
 
 @catalog_public.get("/study/{study_id}/open", tags=["retrieval"])
@@ -639,3 +739,35 @@ def reindex() -> Reindexed:
 app.include_router(public)
 app.include_router(catalog_public)
 app.include_router(catalog)
+
+class _ReaderFiles(StaticFiles):
+    """`StaticFiles` that treats a missing dist as "not there", not as a fault.
+
+    Measured, because it is not what the flag suggests: `check_dir=False` only
+    skips the check in the CONSTRUCTOR. Starlette still stats the directory on
+    the first request (`check_config`) and raises `RuntimeError` if it is
+    absent — a **500 with a stack trace** for a service that is working
+    perfectly and simply has no frontend bundled. Skipping that check leaves the
+    ordinary path, which answers 404 per file, cleanly.
+
+    The 501 that actually explains itself lives on the routes above; this is
+    only about the assets, and a missing asset IS a 404.
+    """
+
+    async def check_config(self) -> None:  # pragma: no cover — trivial override
+        return None
+
+
+# The reading page's assets, served from the directory they were built beside.
+#
+# `check_dir=False` on purpose as well: the mount is a route, routes are built
+# at startup, and the dev stack routinely comes up before anybody has run `npm
+# run build:reader`. Refusing to start would let a missing FRONTEND take the
+# catalogue down.
+#
+# `html=False`, also on purpose: with `html=True` a request for the mount root
+# would serve `index.html` — and in this dist `index.html` is the EDITOR, 1.9 MB
+# of the wrong program under a URL that says "reader".
+app.mount(READER_MOUNT,
+          _ReaderFiles(directory=str(READER_DIST), check_dir=False, html=False),
+          name="reader")

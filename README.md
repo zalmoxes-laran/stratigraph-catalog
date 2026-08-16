@@ -81,6 +81,39 @@ The static file **says it is a snapshot**, in its own footer; the live page says
 it is live, in its own. A reader who is handed one of them has no other way to
 know which they are looking at.
 
+### How the live page is served — a directory, not a file
+
+The reader used to be one self-contained HTML that this service read and
+returned as a string. It is not one file any more: EMStudio dropped
+`viteSingleFile` from the reader entry so its 3D engine could be a chunk fetched
+when a model appears rather than 800 kB of base64 in every page load. The editor
+still is one file — it opens off a USB stick in a trench — but the reader is
+*served*, and a served page has somewhere to put its assets.
+
+So `dist/` is mounted whole, at `/catalog/reader/`, with the shell at its root.
+The shell asks for `./assets/…`, the browser resolves that against the directory
+it came from, and the requests land inside the mount. Three things are coupled,
+and moving any one of them alone only relocates the 404:
+
+1. the mount (`app/main.py`, `READER_MOUNT`);
+2. the dist reaching the service (`EM_CATALOG_READER`, a volume in the dev stack);
+3. the reader built with a **relative** base, so it does not care which prefix
+   serves it (`EMStudio/frontend/vite.config.ts`, asserted by
+   `scripts/check-narrative.mjs`).
+
+The `?emjson=` handed to that page is **same-origin**, and that is a measured
+correction rather than a preference: an absolute URL names one origin, while the
+page is reached both through the proxy on https and on the container port
+directly — and an https page told to fetch `http://localhost:8010/…` is blocked
+as mixed content, showing an empty study over a bundle that loaded perfectly.
+The deep links from `/open` stay absolute: those are read by *other* software,
+on some other origin.
+
+No dist → **501** on `/study/{id}/narrative`, naming the build command and the
+variable. Not a blank page, which would read as an empty study; and not a 500,
+which would read as a broken catalogue. `/health` says the same thing up front,
+under `capabilities.reading_page`.
+
 ## API
 
 ```
@@ -91,7 +124,8 @@ GET    /catalog/study/{id}                      the card
 GET    /catalog/study/{id}/emjson               the container
 GET    /catalog/study/{id}/ttl                  the published projection
 GET    /catalog/study/{id}/narrative           the study READ as a story (live)
-GET    /catalog/viewer.html                    the reading page itself (a program, not a study)
+GET    /catalog/reader/reader.html              the reading page itself (a program, not a study)
+GET    /catalog/reader/assets/…                 what that page is built from
 GET    /catalog/study/{id}/open?app=emstudio|blender|heriverse
 POST   /catalog/studies?study_id=               register / replace          [token]
 DELETE /catalog/study/{id}                      withdraw                    [token]
@@ -166,6 +200,7 @@ store.
 | `EM_CATALOG_DB` | the dev index file (SQLite). Absent → `:memory:` |
 | `COUCHDB_URL` / `_USER` / `_PASSWORD` / `_DATABASE` | the deploy index. Set → used; unset → SQLite. Never chosen silently |
 | `OIDC_ISSUER` (or `TOKEN_ENDPOINT`), `OIDC_AUDIENCE` (or `CLIENT_ID_em`) | Keycloak. Half-configured → the process refuses to start |
+| `EM_CATALOG_READER` | the built EMStudio reader — the **`dist/` directory**, shell plus `assets/`. A `…/reader.html` path is accepted too and read as "the shell" (its parent is the dist). Unset → the sibling checkout. Absent → an honest 501 |
 | `EM_CATALOG_PUBLIC_URL` | the public base written into "open in" answers, when the proxy does not forward the host |
 | `EM_CATALOG_EMSTUDIO_URL`, `EM_CATALOG_HERIVERSE_URL` | where those apps live, for the deep links |
 
