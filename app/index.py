@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Protocol
 
 #: What `search` understands. Named here so the two implementations answer the
 #: same questions, and so a caller can be told what it may ask.
-FILTERS = ("q", "author", "orcid", "license", "hc2", "hc1", "visibility")
+FILTERS = ("q", "author", "orcid", "license", "hc2", "hc1", "visibility", "kind")
 
 
 class CatalogIndex(Protocol):
@@ -98,6 +98,56 @@ def group_by_hdt(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def group_by_hc1(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The other grouping: one heritage ENTITY, every study that names it.
+
+    The HDT view groups by the twin (HC2) — the same digital object over time.
+    This groups by the thing in the world (HC1), and they are not the same
+    question: a site can be twinned twice, and a **landscape** names several
+    entities at once, so a study appears in as many groups as it has HC1s.
+
+    That last part is why this cannot be a variant of `group_by_hdt`: there,
+    each card belongs to one bucket; here a card belongs to N. The Landscape
+    Matrix (SITE -> HC1 -> studies) is exactly this shape.
+
+    Studies that name no entity are gathered under the `None` key, for the same
+    reason the HDT view keeps its homeless: "what have I not linked yet" is a
+    curator's first question.
+    """
+    groups: Dict[Any, Dict[str, Any]] = {}
+    for card in cards:
+        entities = card.get("hc1s") or ([card["hc1"]] if card.get("hc1") else [])
+        for entity in entities or [None]:
+            key = None
+            if entity:
+                key = entity.get("iri") or entity.get("id")
+            bucket = groups.setdefault(key, {"hc1": entity, "studies": []})
+            bucket["hc1"] = _better_entity(bucket["hc1"], entity)
+            if card not in bucket["studies"]:
+                bucket["studies"].append(card)
+    out = []
+    for key, bucket in groups.items():
+        bucket["key"] = key
+        bucket["count"] = len(bucket["studies"])
+        # a curator reading this wants to know which of them are landscapes
+        bucket["kinds"] = sorted({str(c.get("kind") or "site")
+                                  for c in bucket["studies"]})
+        out.append(bucket)
+    out.sort(key=lambda g: (g["key"] is None, str(g["key"] or "")))
+    return out
+
+
+def hc1_keys(card: Dict[str, Any]) -> List[str]:
+    """Every HC1 identity this study names, the way a group is keyed."""
+    entities = card.get("hc1s") or ([card["hc1"]] if card.get("hc1") else [])
+    keys = []
+    for entity in entities or []:
+        key = (entity or {}).get("iri") or (entity or {}).get("id")
+        if key and str(key) not in keys:
+            keys.append(str(key))
+    return keys
+
+
 def _better_entity(current: Optional[Dict[str, Any]],
                    candidate: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Which of two HC1 records to show for a group — the more informative one.
@@ -134,13 +184,23 @@ def _haystack(card: Dict[str, Any]) -> str:
     for author in card.get("authors") or []:
         parts.append(author.get("name"))
         parts.append(author.get("orcid"))
-    for key in ("hc1", "hc2"):
-        node = card.get(key) or {}
-        parts.append(node.get("name"))
-        parts.append(node.get("iri"))
+    for node in [card.get("hc2") or {}] + list(card.get("hc1s") or [])  \
+            + [card.get("hc1") or {}]:
+        parts.append((node or {}).get("name"))
+        parts.append((node or {}).get("iri"))
     for gid in card.get("graph_ids") or []:
         parts.append(gid)
     return " ".join(str(p) for p in parts if p).lower()
+
+
+def _hc1_blob(card: Dict[str, Any]) -> str:
+    """`|key|key|` — every entity the study names, in a form LIKE can match.
+
+    Delimited on both sides so `|hc1_sarm|` cannot match `|hc1_sarmizegetusa|`:
+    a substring search over identifiers finds the wrong monument eventually.
+    """
+    keys = hc1_keys(card)
+    return ("|" + "|".join(keys) + "|") if keys else ""
 
 
 def _authors_blob(card: Dict[str, Any]) -> str:
@@ -173,11 +233,28 @@ CREATE TABLE IF NOT EXISTS studies (
     visibility  TEXT,
     hc2         TEXT,
     hc1         TEXT,
-    checksum    TEXT
+    checksum    TEXT,
+    kind        TEXT,               -- site | landscape
+    hc1_keys    TEXT                -- |a|b| : a study may name SEVERAL entities
 );
+"""
+
+#: The indexes are a SEPARATE script, and the split is not cosmetic: an index
+#: over a column added later cannot be created before the ALTER that adds it,
+#: and `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists.
+#: Measured the hard way — an index file written before `kind` existed made the
+#: service refuse to start with `no such column: kind`.
+_INDEXES = """
 CREATE INDEX IF NOT EXISTS studies_hc2 ON studies(hc2);
 CREATE INDEX IF NOT EXISTS studies_visibility ON studies(visibility);
+CREATE INDEX IF NOT EXISTS studies_kind ON studies(kind);
 """
+
+#: Columns added after the first release. `CREATE TABLE IF NOT EXISTS` does
+#: nothing to a table that already exists, so an index written before these
+#: existed would keep answering without them — silently, which is the failure
+#: worth the six lines below.
+_ADDED_COLUMNS = (("kind", "TEXT"), ("hc1_keys", "TEXT"))
 
 
 class SqliteCatalogIndex:
@@ -197,6 +274,14 @@ class SqliteCatalogIndex:
         self._lock = threading.Lock()
         with self._lock:
             self._db.executescript(_SCHEMA)
+            have = {row["name"] for row in
+                    self._db.execute("PRAGMA table_info(studies)")}
+            for column, kind in _ADDED_COLUMNS:
+                if column not in have:
+                    self._db.execute(
+                        f"ALTER TABLE studies ADD COLUMN {column} {kind}")
+            # …and only now the indexes, which may name those columns
+            self._db.executescript(_INDEXES)
             self._db.commit()
 
     # ── the interface ────────────────────────────────────────────────────────
@@ -210,17 +295,19 @@ class SqliteCatalogIndex:
         with self._lock:
             self._db.execute(
                 "INSERT INTO studies (id, card, title, haystack, authors, "
-                "license, visibility, hc2, hc1, checksum) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "license, visibility, hc2, hc1, checksum, kind, hc1_keys) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET card=excluded.card, "
                 "title=excluded.title, haystack=excluded.haystack, "
                 "authors=excluded.authors, license=excluded.license, "
                 "visibility=excluded.visibility, hc2=excluded.hc2, "
-                "hc1=excluded.hc1, checksum=excluded.checksum",
+                "hc1=excluded.hc1, checksum=excluded.checksum, "
+                "kind=excluded.kind, hc1_keys=excluded.hc1_keys",
                 (str(study_id), json.dumps(card, ensure_ascii=False),
                  card.get("title"), _haystack(card), _authors_blob(card),
                  card.get("license"), card.get("visibility"), hc2, hc1,
-                 card.get("checksum")))
+                 card.get("checksum"), card.get("kind"),
+                 _hc1_blob(card)))
             self._db.commit()
 
     def get(self, study_id: str) -> Optional[Dict[str, Any]]:
@@ -240,16 +327,22 @@ class SqliteCatalogIndex:
             if value:
                 where.append(f"{column} LIKE ?")
                 args.append(f"%{value}%")
-        for field in ("license", "visibility"):
+        for field in ("license", "visibility", "kind"):
             value = (filters.get(field) or "").strip()
             if value:
                 where.append(f"{field} = ?")
                 args.append(value)
-        for field in ("hc2", "hc1"):
-            value = (filters.get(field) or "").strip()
-            if value:
-                where.append(f"{field} = ?")
-                args.append(value)
+        value = (filters.get("hc2") or "").strip()
+        if value:
+            where.append("hc2 = ?")
+            args.append(value)
+        # hc1 matches ANY entity the study names, not only the first one: a
+        # landscape names several, and an equality test would find it under one
+        # of its sites and lose it under the others.
+        value = (filters.get("hc1") or "").strip()
+        if value:
+            where.append("(hc1 = ? OR hc1_keys LIKE ?)")
+            args.extend([value, f"%|{value}|%"])
         sql = "SELECT card FROM studies"
         if where:
             sql += " WHERE " + " AND ".join(where)

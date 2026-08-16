@@ -39,13 +39,14 @@ def study_document(graph_id="sarmizegetusa-2026", *, title="Sarmizegetusa 2026",
                    hdt=("hdt_sarm", "Sarmizegetusa HDT",
                         "https://example.org/h/sarm"),
                    entity=("hc1_sarm", "Sarmizegetusa Regia"),
-                   units=("US 1", "US 2"), site=(45.62, 23.31)):
+                   units=("US 1", "US 2"), site=(45.62, 23.31), embargo=None):
     """One study, as a container DOCUMENT — the shape a catalogue receives."""
     graph = Graph(graph_id=graph_id)
     graph.name = {"default": title}
     for index, name in enumerate(units, start=1):
         graph.add_node(StratigraphicUnit(f"{graph_id}-us{index}", name=name))
     root = materialize_graph_scope(graph, author=author, license=license,
+                                   embargo=embargo,
                                    em_id=graph_id.upper(), orcid=orcid)
     if site:
         root.data["site_position"] = {"lat": site[0], "lon": site[1],

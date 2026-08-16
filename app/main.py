@@ -65,7 +65,7 @@ from .auth import AuthDependency, authenticator
 from .deeplink import APPS, open_targets
 from .deeplink import describe as deeplink_describe
 from .index import describe as index_describe
-from .index import group_by_hdt, index_from_env
+from .index import group_by_hc1, group_by_hdt, index_from_env
 from .store import describe as store_describe
 from .store import store_from_env
 
@@ -222,6 +222,30 @@ def _container_path(study_id: str) -> str:
     return f"/catalog/study/{study_id}/emjson"
 
 
+def is_public_now(card: Dict[str, Any]) -> bool:
+    """Public AND out of embargo — the one reading of "anybody may see this".
+
+    The embargo is a **temporal** gate over the same question the visibility
+    answers, so it belongs in the same sentence: a study published with a date
+    in the future behaves as restricted until that date and then goes back to
+    what it says it is. em-server applies the identical rule at a room's door
+    (`app/access.py`), and both call the same library function — a study hidden
+    from this list while its room let people in would be worse than either
+    behaviour on its own.
+
+    Computed from `card["embargo"]` and not from the stored `embargo_active`
+    flag: that flag was true when the study was INDEXED, and an embargo that has
+    since expired must not keep a study hidden because nobody re-indexed it.
+    """
+    if card.get("visibility") != "public":
+        return False
+    try:
+        from s3dgraphy.study import embargo_active
+    except ImportError:      # pragma: no cover — the library is a hard dep
+        return True
+    return not embargo_active(card.get("embargo"))
+
+
 def _require_visible(card: Dict[str, Any], request: Request,
                      token: Optional[str] = None) -> None:
     """A public study is served to anybody; anything else needs a token.
@@ -230,8 +254,11 @@ def _require_visible(card: Dict[str, Any], request: Request,
     dissemination tier — validated work, meant to be read — and everything else
     is in progress. `?token=` is accepted beside the header because a viewer
     (Mirador, a browser opening a link) cannot set one.
+
+    An **embargo** counts as "anything else" until it expires: see
+    :func:`is_public_now`.
     """
-    if card.get("visibility") == "public":
+    if is_public_now(card):
         return
     header = request.headers.get("authorization") or ""
     if header.lower().startswith("bearer ") or not token:
@@ -332,7 +359,9 @@ def list_studies(request: Request,
                                             description="Heritage Digital Twin"),
                  hc1: Optional[str] = Query(default=None,
                                             description="Heritage Entity"),
-                 view: str = Query(default="flat", pattern="^(flat|hdt)$"),
+                 kind: Optional[str] = Query(default=None,
+                                             description="site | landscape"),
+                 view: str = Query(default="flat", pattern="^(flat|hdt|hc1)$"),
                  token: Optional[str] = Query(default=None)) -> Dict[str, Any]:
     """The catalogue: search, filter, and the two views.
 
@@ -348,11 +377,17 @@ def list_studies(request: Request,
     """
     authenticated = _is_authenticated(request, token)
     cards = INDEX.search(q=q, author=author, orcid=orcid, license=license,
-                         hc2=hc2, hc1=hc1)
+                         hc2=hc2, hc1=hc1, kind=kind)
     if not authenticated:
-        cards = [c for c in cards if c.get("visibility") == "public"]
+        cards = [c for c in cards if is_public_now(c)]
     if view == "hdt":
         return {"view": "hdt", "count": len(cards), "groups": group_by_hdt(cards)}
+    if view == "hc1":
+        # the LANDSCAPE MATRIX view: one entity, every study that names it —
+        # and a study may appear under several, which is what distinguishes it
+        # from the HDT grouping above
+        return {"view": "hc1", "count": len(cards),
+                "groups": group_by_hc1(cards)}
     return {"view": "flat", "count": len(cards), "studies": cards}
 
 
@@ -392,7 +427,7 @@ def hdt_view(hc2: str, request: Request,
     authenticated = _is_authenticated(request, token)
     cards = INDEX.search(hc2=hc2)
     if not authenticated:
-        cards = [c for c in cards if c.get("visibility") == "public"]
+        cards = [c for c in cards if is_public_now(c)]
     if not cards:
         raise HTTPException(status_code=404,
                             detail=f"no studies for the digital twin {hc2!r}")
@@ -400,6 +435,76 @@ def hdt_view(hc2: str, request: Request,
     return {"hc2": hc2, "count": len(cards),
             "hc1": groups[0].get("hc1") if groups else None,
             "studies": cards}
+
+
+@catalog_public.get("/hc1/{hc1:path}", tags=["views"])
+def hc1_view(hc1: str, request: Request,
+             token: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """One heritage ENTITY, every study that names it — the Landscape Matrix row.
+
+    Beside the HDT view rather than instead of it, because they answer different
+    questions: `/hdt/{hc2}` is one digital twin over time, this is one thing in
+    the world however many twins and campaigns it has. A landscape study names
+    several entities and therefore appears under each of them.
+
+    `:path` for the same reason as the HDT view: these keys are usually IRIs.
+    """
+    authenticated = _is_authenticated(request, token)
+    cards = INDEX.search(hc1=hc1)
+    if not authenticated:
+        cards = [c for c in cards if is_public_now(c)]
+    if not cards:
+        raise HTTPException(status_code=404,
+                            detail=f"no studies name the heritage entity {hc1!r}")
+    groups = group_by_hc1(cards)
+    mine = next((g for g in groups if str(g.get("key")) == hc1), None)
+    return {"hc1": (mine or groups[0]).get("hc1"), "key": hc1,
+            "count": len(cards),
+            "sites": [c for c in cards if c.get("kind") != "landscape"],
+            "landscapes": [c for c in cards if c.get("kind") == "landscape"],
+            "studies": cards}
+
+
+@catalog_public.get("/landscape/{study_id}", tags=["views"])
+def landscape_view(study_id: str, request: Request,
+                   token: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """A landscape and the site studies it is made of (spec §4, SITE→HC1→studies).
+
+    The composition is a list of REFERENCES the container carries, so this
+    resolves them against the index — by the catalogue's own id first, then by
+    the study's `em_id`, because whoever wrote the landscape had whichever of
+    the two to hand.
+
+    A reference that resolves to nothing is **reported, not dropped**:
+    `missing` names it. A landscape quietly listing three of its four sites is
+    the kind of error that gets discovered in a publication.
+
+    Works on a study of any kind — asking a site for its composition answers an
+    empty one, which is the truthful answer and not an error.
+    """
+    card = _card_or_404(study_id)
+    _require_visible(card, request, token)
+    authenticated = _is_authenticated(request, token)
+
+    parts, missing = [], []
+    for ref in card.get("composition") or []:
+        found = None
+        if ref.get("id"):
+            found = INDEX.get(str(ref["id"]))
+        if found is None and ref.get("em_id"):
+            found = next((c for c in INDEX.search()
+                          if c.get("em_id") == ref["em_id"]), None)
+        if found is None:
+            missing.append(ref)
+        elif authenticated or is_public_now(found):
+            parts.append(found)
+        else:
+            # it exists and this caller may not see it. Saying "missing" would
+            # be a lie about the study; saying nothing would make the landscape
+            # look smaller than it is. So: named as restricted, without content.
+            missing.append({**ref, "restricted": True})
+    return {"landscape": card, "kind": card.get("kind"),
+            "count": len(parts), "sites": parts, "missing": missing}
 
 
 # ── one study ─────────────────────────────────────────────────────────────────
