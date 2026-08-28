@@ -7,7 +7,7 @@ tidiness, it is the property that keeps a catalogue honest — if the index and 
 containers ever disagree, the containers win and `reindex` proves it by rebuilding
 the index from them.
 
-Same shape as em-server's `assets.py`, and deliberately so: an interface of four
+Same shape as StratiGraph Server's `assets.py`, and deliberately so: an interface of four
 methods, an in-memory implementation that says it is for tests, and MinIO as the
 deployment target — a line of configuration, not a rewrite.
 
@@ -20,7 +20,7 @@ the copy I indexed" rather than as the name. Immutable citation is a different
 job, done by pinning a version (`container.pin_version`), and pinning is
 deliberately not the same act as saving.
 
-The bucket is the one em-server already writes assets into; studies live under
+The bucket is the one StratiGraph Server already writes assets into; studies live under
 their own **prefix** (spec §7: same store, shared prefixes). A catalogue that
 demanded a bucket of its own would be one more thing to provision for no gain.
 """
@@ -168,7 +168,7 @@ class MinioContainerStore:
         except Exception as exc:      # network, DNS, TLS: not an S3 answer at all
             raise RuntimeError(
                 f"the object store at {self.endpoint} did not answer: {exc}. "
-                f"em-catalog will not start without the store that holds its "
+                f"StratiGraph Catalog will not start without the store that holds its "
                 f"truth") from exc
 
     def put(self, study_id: str, doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -226,7 +226,7 @@ class MinioContainerStore:
         return True
 
 
-#: The same two spellings em-server reads, in the same order — one setting with
+#: The same two spellings StratiGraph Server reads, in the same order — one setting with
 #: two names and a precedence, never two settings that will one day disagree.
 #: Reading the SAME variables is what makes "the catalogue and the rooms share a
 #: bucket" true in configuration and not only in prose.

@@ -1,4 +1,4 @@
-"""em-catalog — the StratiGraph Catalog, as a REFERENCE implementation.
+"""StratiGraph Catalog — the StratiGraph Catalog, as a REFERENCE implementation.
 
 **Read this first: what this service is and what it is not.**
 
@@ -22,7 +22,7 @@ already carry. The card is derived by **s3Dgraphy** (`api.study_metadata`) — a
 catalogue that parsed containers itself would become a second reader, and the
 day it disagreed with the library, the index would be a second truth.
 
-**The rules inherited from em-server**, because a sibling service that broke them
+**The rules inherited from StratiGraph Server**, because a sibling service that broke them
 would teach the wrong thing:
 
 * the domain lives in s3Dgraphy; this is orchestration, an index, and HTTP;
@@ -73,14 +73,14 @@ try:  # the whole point of the service; a clear failure beats a mysterious one
     from s3dgraphy import api as em
 except ImportError as exc:  # pragma: no cover — deployment error, not runtime
     raise RuntimeError(
-        "em-catalog needs s3dgraphy importable: pip install s3dgraphy "
+        "StratiGraph Catalog needs s3dgraphy importable: pip install s3dgraphy "
         f"(or -e ../s3Dgraphy). {exc}"
     ) from exc
 
 __version__ = "0.1.0.dev0"
 
 app = FastAPI(
-    title="em-catalog",
+    title="StratiGraph Catalog",
     version=__version__,
     summary="The StratiGraph Catalog — reference implementation. Studies are "
             "em.json containers; the index is derived.",
@@ -98,7 +98,7 @@ catalog = APIRouter(prefix="/catalog", dependencies=[AuthDependency])
 #: …and everything whose access is decided by the STUDY rather than by the route
 #: sits here, doing the check itself. A router-level dependency would refuse a
 #: public study before the handler could look at it — the same arrangement
-#: em-server uses for a public IIIF manifest, and for the same reason.
+#: StratiGraph Server uses for a public IIIF manifest, and for the same reason.
 catalog_public = APIRouter(prefix="/catalog")
 
 public = APIRouter()
@@ -108,7 +108,10 @@ public = APIRouter()
 
 class Health(BaseModel):
     ok: bool = True
-    service: str = "em-catalog"
+    #: WHO answered. Renamed with the repo (2026-08-25). The CouchDB database
+    #: name and the OIDC audience did NOT change: those are handles a running
+    #: deployment resolves by, and renaming them loses a database.
+    service: str = "stratigraph-catalog"
     version: str
     s3dgraphy: Optional[str] = None
     #: what this build can actually do — a client reading this does not have to
@@ -228,7 +231,7 @@ def is_public_now(card: Dict[str, Any]) -> bool:
     The embargo is a **temporal** gate over the same question the visibility
     answers, so it belongs in the same sentence: a study published with a date
     in the future behaves as restricted until that date and then goes back to
-    what it says it is. em-server applies the identical rule at a room's door
+    what it says it is. StratiGraph Server applies the identical rule at a room's door
     (`app/access.py`), and both call the same library function — a study hidden
     from this list while its room let people in would be worse than either
     behaviour on its own.
@@ -250,7 +253,7 @@ def _require_visible(card: Dict[str, Any], request: Request,
                      token: Optional[str] = None) -> None:
     """A public study is served to anybody; anything else needs a token.
 
-    Same rule as an em-server room, and the same reasoning: `public` is the
+    Same rule as an StratiGraph Server room, and the same reasoning: `public` is the
     dissemination tier — validated work, meant to be read — and everything else
     is in progress. `?token=` is accepted beside the header because a viewer
     (Mirador, a browser opening a link) cannot set one.

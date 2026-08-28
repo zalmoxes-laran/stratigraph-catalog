@@ -217,7 +217,7 @@ def test_the_couchdb_index_answers_exactly_like_the_dev_one(public_study,
     """
     import base64
 
-    database = "em-catalog-test"
+    database = "StratiGraph Catalog-test"
     couch = index_from_env({"COUCHDB_URL": COUCH_URL, "COUCHDB_USER": "admin",
                             "COUCHDB_PASSWORD": "admin",
                             "COUCHDB_DATABASE": database})

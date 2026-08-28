@@ -1,11 +1,11 @@
-# em-catalog — the StratiGraph Catalog, reference implementation.
+# stratigraph-catalog — the StratiGraph Catalog, reference implementation.
 #
 # Almost stateless: the studies live in the object store and the index is
 # derivable from them. The one writable path is the dev index (SQLite), and a
 # deployment that points at CouchDB does not need even that.
 #
-#   docker build -t em-catalog .
-#   docker run --rm -p 8010:8000 em-catalog
+#   docker build -t stratigraph-catalog .
+#   docker run --rm -p 8010:8000 stratigraph-catalog
 #
 FROM python:3.12-slim AS base
 
@@ -20,7 +20,7 @@ ARG S3DGRAPHY_SPEC="s3dgraphy[rdf]>=1.6.0.dev13"
 WORKDIR /srv/em-catalog
 
 COPY pyproject.toml README.md ./
-# PyJWT and minio are here and not behind a build arg, for the reason em-server
+# PyJWT and minio are here and not behind a build arg, for the reason StratiGraph Server
 # states: an image that cannot verify a token comes up open, and an image that
 # cannot reach the object store keeps its studies in a process that dies.
 RUN pip install --upgrade pip && \
@@ -30,7 +30,7 @@ RUN pip install --upgrade pip && \
 COPY app ./app
 
 # Not root. /srv/em-catalog-data exists in the image so a named volume mounted
-# there is not created root-owned — the same trap em-server documents, and the
+# there is not created root-owned — the same trap StratiGraph Server documents, and the
 # SQLite index is exactly the file that would fail to be written.
 RUN useradd --create-home --shell /usr/sbin/nologin emcatalog && \
     mkdir -p /srv/em-catalog-data && \

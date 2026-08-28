@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "em-catalog"
+name = "stratigraph-catalog"
 version = "0.1.0.dev0"
 description = "The StratiGraph Catalog — REFERENCE implementation of the study contract (studies are em.json containers; the index is derived)"
 readme = "README.md"
@@ -12,7 +12,7 @@ license = { text = "GPL-3.0-or-later" }
 authors = [{ name = "Emanuel Demetrescu", email = "emanuel.demetrescu@cnr.it" }]
 keywords = ["extended matrix", "catalog", "heritage digital twin", "fastapi"]
 
-# Same three-line shape as em-server, and for the same reason: this service adds
+# Same three-line shape as StratiGraph Server, and for the same reason: this service adds
 # a transport and an index, and nothing else. Every domain question — what a
 # study IS, how to read a container, how to project it to RDF — is answered by
 # s3Dgraphy, which is why it is the first dependency and not an implementation
@@ -24,7 +24,7 @@ dependencies = [
     "s3dgraphy[rdf]>=1.6.0.dev13",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
-    # Auth is a HARD dependency for the same reason as in em-server: a build that
+    # Auth is a HARD dependency for the same reason as in StratiGraph Server: a build that
     # cannot verify a token is a build that comes up open on shared
     # infrastructure. See app/auth.py.
     "PyJWT[crypto]>=2.8",

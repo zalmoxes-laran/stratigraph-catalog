@@ -24,7 +24,7 @@ on every machine on earth, and the failure would look like the user's fault.
 The app bases are **configuration**, never a request parameter: where EMStudio
 lives is a property of the deployment, and letting a caller name it would make
 this endpoint a redirector to anywhere (the same rule `docs/URL-TOPOLOGY.md` in
-em-server states for internal fetches, applied to what we write into an answer).
+StratiGraph Server states for internal fetches, applied to what we write into an answer).
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def open_targets(study_id: str, *, emjson_url: str,
 
     `emjson_url` is the PUBLIC url of the container — the caller builds it,
     because only the caller knows how it is being reached (the same
-    internal/public split em-server writes down: a document carries the form the
+    internal/public split StratiGraph Server writes down: a document carries the form the
     *reader* can fetch).
     """
     wanted = [a for a in (apps or APPS) if a in APPS]

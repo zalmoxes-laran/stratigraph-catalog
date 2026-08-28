@@ -450,7 +450,7 @@ class CouchDbCatalogIndex:
             raise
         except (urllib.error.URLError, OSError) as exc:
             raise RuntimeError(
-                f"the CouchDB at {self.url} did not answer: {exc}. em-catalog "
+                f"the CouchDB at {self.url} did not answer: {exc}. StratiGraph Catalog "
                 f"will not run with an index it cannot reach — the studies are "
                 f"safe in the object store, but the catalogue would be blind"
             ) from None

@@ -1,4 +1,4 @@
-# em-catalog — the StratiGraph Catalog, **reference implementation**
+# StratiGraph Catalog — the StratiGraph Catalog, **reference implementation**
 
 > **This is not the production Catalog.** The Catalog of the GA (WP6, D6.1) —
 > PID/DOI minting, FAIR publication, Data Space circulation, the browse UI, the
@@ -172,8 +172,8 @@ profile).
 In the dev-stack, with MinIO, Keycloak and the rest around it:
 
 ```bash
-cd ../em-server/dev-stack
-docker-compose --env-file .env.dev -f docker-compose.dev.yml up -d --build em-catalog
+cd ../StratiGraph Server/dev-stack
+docker-compose --env-file .env.dev -f docker-compose.dev.yml up -d --build StratiGraph Catalog
 python smoke_catalog.py            # 30 checks, live
 ```
 
@@ -186,17 +186,17 @@ store.
 
 > The container in the dev-stack runs `uvicorn` **without** `--reload`: the code
 > is mounted, but a change needs
-> `docker-compose --env-file .env.dev -f docker-compose.dev.yml restart em-catalog`.
+> `docker-compose --env-file .env.dev -f docker-compose.dev.yml restart StratiGraph Catalog`.
 
 **Where this sits in the wider system:**
-[`ARCHITECTURE-SYSTEM.md`](../em-server/docs/ARCHITECTURE-SYSTEM.md) ·
-**deploying it:** [`DEPLOYMENT.md`](../em-server/docs/DEPLOYMENT.md).
+[`ARCHITECTURE-SYSTEM.md`](../StratiGraph Server/docs/ARCHITECTURE-SYSTEM.md) ·
+**deploying it:** [`DEPLOYMENT.md`](../StratiGraph Server/docs/DEPLOYMENT.md).
 
 ## Configuration
 
 | variable | what it does |
 |---|---|
-| `MINIO_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET` | the container store. **The same variables em-server reads** — one bucket, two prefixes. Half of them set is a startup refusal, never a fallback to memory |
+| `MINIO_ENDPOINT` / `_ACCESS_KEY` / `_SECRET_KEY` / `_BUCKET` | the container store. **The same variables StratiGraph Server reads** — one bucket, two prefixes. Half of them set is a startup refusal, never a fallback to memory |
 | `EM_CATALOG_DB` | the dev index file (SQLite). Absent → `:memory:` |
 | `COUCHDB_URL` / `_USER` / `_PASSWORD` / `_DATABASE` | the deploy index. Set → used; unset → SQLite. Never chosen silently |
 | `OIDC_ISSUER` (or `TOKEN_ENDPOINT`), `OIDC_AUDIENCE` (or `CLIENT_ID_em`) | Keycloak. Half-configured → the process refuses to start |

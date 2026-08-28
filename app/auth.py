@@ -1,6 +1,6 @@
-"""OIDC bearer-token auth against the SAME Keycloak realm em-server uses.
+"""OIDC bearer-token auth against the SAME Keycloak realm StratiGraph Server uses.
 
-em-catalog is a **resource server**: it never logs anybody in. A client obtains an
+StratiGraph Catalog is a **resource server**: it never logs anybody in. A client obtains an
 access token from Keycloak (Heriverse-Server already does the authorization-code
 dance for its own users) and presents it here as ``Authorization: Bearer <jwt>``.
 This module answers one question per request — *is this token good, and is it for
@@ -8,7 +8,7 @@ us* — by checking the signature against the realm's published JWKS.
 
 **Why a resource server and not a login flow.** Two services validating the same
 realm's tokens share their users, groups and revocations for free, with no session
-store on either side. The moment em-catalog kept a session it would stop being
+store on either side. The moment StratiGraph Catalog kept a session it would stop being
 horizontally scalable, which is the 12-factor property `main.py` exists to defend.
 
 **Configuration reuses what 3DR already deploys.** Heriverse-Docker sets
@@ -16,7 +16,7 @@ horizontally scalable, which is the 12-factor property `main.py` exists to defen
 ``CLIENT_ID_<app>``. Rather than asking for a second spelling of the same realm
 URL — the classic way two configs drift until one is wrong — the issuer and the
 JWKS URI are DERIVED from that endpoint when they are not given explicitly. A
-deployment that already runs Heriverse can point em-catalog at the same realm
+deployment that already runs Heriverse can point StratiGraph Catalog at the same realm
 without inventing a variable.
 
 **Three states, and the middle one is the point:**
@@ -34,10 +34,10 @@ without inventing a variable.
 ────────────────────────────────────────────────────────────────────────────────
 **A DELIBERATE DUPLICATE, and the condition for undoing it.**
 
-This file is em-server's ``app/auth.py`` with the service name changed. That is a
+This file is StratiGraph Server's ``app/auth.py`` with the service name changed. That is a
 copy, it is a cost, and it is stated here rather than discovered later.
 
-Why copy: em-catalog is a REFERENCE implementation whose whole point is to be
+Why copy: StratiGraph Catalog is a REFERENCE implementation whose whole point is to be
 readable and deployable on its own; making it import from a sibling service that
 is not published would trade an honest duplicate for a dependency nobody can
 install. What is duplicated is also the least volatile thing in either repo — an
@@ -62,7 +62,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import Depends, HTTPException, Request
 
-log = logging.getLogger("em-catalog.auth")
+log = logging.getLogger("StratiGraph Catalog.auth")
 
 #: How long a fetched JWKS is trusted before it is fetched again. Keycloak key
 #: rotation is rare, so this is generous; an UNKNOWN `kid` also forces an
@@ -80,7 +80,7 @@ _TOKEN_SUFFIX = "/protocol/openid-connect/token"
 
 def _env(*names: str) -> str:
     """First non-empty value among *names*. The order is the precedence: an
-    explicit em-catalog variable wins over one inherited from Heriverse's realm
+    explicit StratiGraph Catalog variable wins over one inherited from Heriverse's realm
     configuration."""
     for name in names:
         value = (os.environ.get(name) or "").strip()
