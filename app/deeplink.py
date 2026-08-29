@@ -14,12 +14,21 @@ Heriverse reads the container shape). Any client that does nothing else with thi
 answer can still act on that one field, which is the definition of a useful
 contract.
 
-**What is proposed** — the custom scheme (`emstudio://open?study=…`). The spec
-offers it as an example to co-design, and **no such handler is registered**: not
-in EMStudio's Tauri configuration, not anywhere else. So it is returned marked
-`proposed: true`, next to a `web` URL that works now. A catalogue that shipped an
-unregistered scheme as if it were live would produce a button that does nothing
-on every machine on earth, and the failure would look like the user's fault.
+**The scheme is now the ECOSYSTEM's** — `stratigraph://open?study=…`
+(2026-08-29). It used to be `emstudio://`, which was a scheme owned by one
+consumer: the opposite of what a handoff contract is for. StratiGraph Server
+defines the same scheme for a ROOM (`stratigraph-server/app/handoff.py`), and the
+two are deliberately one namespace with two entry points — the Catalog opens a
+STUDY (resolve the container, and in time its room), the room browser opens a
+ROOM. A consumer registers one handler and reads the action.
+
+**It is still marked `proposed`, and honestly so.** The handler is registered in
+EMStudio's desktop bundle and nowhere else: not on the web build, not in EMtools,
+not on a machine that has only a browser. So the `web` URL stays beside it and
+`proposed` says which half is aspiration — a catalogue that shipped an
+unregistered scheme as if it were live would produce a button that does nothing,
+and the failure would look like the user's fault. The day a consumer registers
+it, its name comes out of `SCHEME_REGISTERED_IN` below and the note gets shorter.
 
 The app bases are **configuration**, never a request parameter: where EMStudio
 lives is a property of the deployment, and letting a caller name it would make
@@ -36,6 +45,17 @@ from typing import Any, Dict, List, Optional
 #: The apps a study can be opened in. Three, because those are the three that
 #: read the container; a fourth arrives with its reader, not with a URL.
 APPS = ("emstudio", "blender", "heriverse")
+
+#: The ECOSYSTEM's scheme, not any one app's. Kept in step with
+#: `stratigraph-server/app/handoff.py::SCHEME` — one namespace, two entry points
+#: (a study here, a room there).
+SCHEME = "stratigraph"
+
+#: Where the handler actually EXISTS today. The list is the honest half of the
+#: `proposed` flag: a button is live for the apps in here and a coin-toss
+#: everywhere else, and saying which is the difference between a promise and a
+#: measurement.
+SCHEME_REGISTERED_IN = ("emstudio-desktop",)
 
 
 def _base(*names: str, default: str = "") -> str:
@@ -72,12 +92,16 @@ def open_targets(study_id: str, *, emjson_url: str,
                 "web": (f"{web}/?study={quoted}&emjson="
                         f"{urllib.parse.quote(emjson_url, safe='')}"
                         if web else None),
-                # spec §6's example — offered, NOT registered anywhere yet
-                "scheme": f"emstudio://open?study={quoted}",
-                "proposed": ["scheme"] if not web else ["scheme"],
-                "note": "the custom scheme is a proposal (spec §6): no handler "
-                        "is registered yet. Use `emjson` (or `web`, when the "
-                        "deployment names an EMStudio).",
+                # the ecosystem's scheme (§6, and `handoff.py` in the server):
+                # registered in EMStudio's desktop bundle, nowhere else yet
+                "scheme": f"{SCHEME}://open?study={quoted}",
+                "proposed": ["scheme"],
+                "registered_in": list(SCHEME_REGISTERED_IN),
+                "note": "the custom scheme opens in EMStudio's DESKTOP build, "
+                        "where the handler is registered; everywhere else use "
+                        "`emjson` (or `web`, when the deployment names an "
+                        "EMStudio). Same scheme as a room handoff — one "
+                        "namespace, two actions.",
             }
         elif app == "blender":
             # EMtools has no HTTP endpoint that accepts a pushed container: it
