@@ -848,6 +848,28 @@ app.include_router(public)
 app.include_router(catalog_public)
 app.include_router(catalog)
 
+class _FreshStatic(StaticFiles):
+    """`StaticFiles` that makes a browser ASK before reusing what it has.
+
+    Ported from StratiGraph Server, where it was measured rather than reasoned
+    about: an edited stylesheet did not reach a browser that already had the page
+    open — the mount sends an `ETag` and a `Last-Modified` but no
+    `Cache-Control`, so the browser applies HEURISTIC freshness and may serve a
+    stale copy without asking. A catalogue is read by people who keep a tab open
+    for a week, so it is the same failure with a longer fuse.
+
+    `no-cache` does not mean "do not store": it means "store, but revalidate".
+    With the ETag already there that is a 304 and a few bytes, and a device that
+    is offline still gets the file out of its own cache, because that is what a
+    failed revalidation falls back to.
+    """
+
+    async def get_response(self, path: str, scope):        # type: ignore[override]
+        response = await super().get_response(path, scope)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
+
 class _ReaderFiles(StaticFiles):
     """`StaticFiles` that treats a missing dist as "not there", not as a fault.
 
@@ -879,3 +901,28 @@ class _ReaderFiles(StaticFiles):
 app.mount(READER_MOUNT,
           _ReaderFiles(directory=str(READER_DIST), check_dir=False, html=False),
           name="reader")
+
+
+# ── the catalogue's OWN two views, and the identity they wear ────────────────
+#
+# Spec §4 describes two: the flat list of studies, and the HDT view that groups
+# one monument's campaigns over time. Until now both existed only as JSON — the
+# data was there and the pages were not. These are the pages, and they are the
+# fourth StratiGraph-native face to wear the brand (after the field assistant,
+# the room browser and the node console).
+#
+# Static, no build step, and served by the process that holds the index — the
+# same shape as the node console, and for the same reason: a catalogue that
+# needed npm to change a label would be a catalogue nobody changes.
+#
+# The BRAND is vendored (`sync-brand.sh`) and served same-origin, never a CDN:
+# see the header of `app/brand/stratigraph-theme.css`.
+_BRAND = pathlib.Path(__file__).resolve().parent / "brand"
+if _BRAND.is_dir():
+    app.mount("/catalog/brand", _FreshStatic(directory=str(_BRAND)),
+              name="brand")
+
+_UI = pathlib.Path(__file__).resolve().parent / "ui"
+if _UI.is_dir():
+    app.mount("/catalog/ui", _FreshStatic(directory=str(_UI), html=True),
+              name="catalog-ui")

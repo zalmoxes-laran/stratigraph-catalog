@@ -1,0 +1,155 @@
+/* The catalogue's two views (spec §4), wearing the StratiGraph identity.
+
+   THE COLOURS ARE NOT DECIDED HERE. `brand/stratigraph-theme.css` (vendored from
+   `stratigraph-brand` 1.0.0, which reads the WP1 guidebook) owns the palette,
+   the three faces and the contrast table.
+
+   The vocabulary below — ink, paper, card, good/warn/bad — is the SAME mapping
+   the node console uses, deliberately: three StratiGraph faces that each invented
+   their own words would be three things to keep in step. Copied rather than
+   imported because this is a different repo and the theme is the shared part;
+   if a fourth face wants it too, the mapping moves into the brand.
+
+   ── The three measurements this mapping rests on ─────────────────────────────
+   · A FILLED button is Deep Charcoal: white on Burnt Orange is 3.53 (below AA at
+     this size), Off-White on Charcoal is 11.61. Burnt stays the guidebook's
+     ACTION colour — the fill of a primary at a size where 3:1 applies.
+   · A GHOST button is Terracotta text: 5.92 on the card, 5.00 on the ground.
+   · A TAG is a wash with an ink of its own family, never text on a pure accent:
+     info 6.28 · good 5.76 · warn 10.82 · bad 4.82. Text on the pure accents
+     would be 2.27, 1.36 and 2.98.
+*/
+
+@import url("../brand/stratigraph-theme.css");
+
+:root {
+  --ink:      var(--sg-text);
+  --ink-soft: var(--sg-muted);
+  --paper:    var(--sg-bg);
+  --card:     var(--sg-surface);
+  --line:     var(--sg-line);
+  --accent:   var(--sg-accent-quiet);   /* Terracotta: readable as text */
+  --fill:     var(--sg-deep-charcoal);
+  --on-fill:  var(--sg-off-white);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fill:    var(--sg-off-white);
+    --on-fill: var(--sg-deep-charcoal);
+    --accent:  var(--sg-clay-beige);
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: var(--sg-weight-body) 15px/1.55 var(--sg-font-sans);
+}
+
+/* ── chrome ─────────────────────────────────────────────────────────────── */
+
+.bar {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .7rem 1.1rem; border-bottom: 1px solid var(--line);
+  background: var(--card); position: sticky; top: 0; z-index: 2;
+}
+.mark { width: 22px; height: 22px; flex: none; }
+.wordmark { font-family: var(--sg-font-display);
+            font-weight: var(--sg-weight-headline);
+            font-size: 1.05rem; letter-spacing: .2px; }
+.sub { color: var(--ink-soft); }
+.grow { flex: 1; }
+
+main { max-width: 60rem; margin: 0 auto; padding: 1.4rem 1.1rem 4rem; }
+
+h1 { font-family: var(--sg-font-display); font-weight: var(--sg-weight-headline);
+     font-size: var(--sg-text-xl); margin: 0 0 .2rem; }
+h2 { font-family: var(--sg-font-display); font-weight: var(--sg-weight-subtitle);
+     font-size: var(--sg-text-lg); margin: 0; }
+.lede { color: var(--ink-soft); margin: 0 0 1.2rem; }
+
+/* ── the search bar ─────────────────────────────────────────────────────── */
+
+.search { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.1rem; }
+.search input, .search select {
+  font: inherit; padding: .5rem .7rem; border-radius: var(--sg-radius-sm);
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+}
+.search input { flex: 1 1 18rem; }
+
+/* ── a study, as a card ─────────────────────────────────────────────────── */
+
+.study {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--sg-radius); box-shadow: var(--sg-shadow);
+  padding: .9rem 1.05rem; margin-bottom: .7rem;
+}
+.study-head { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; }
+.study-title { font-family: var(--sg-font-display);
+               font-weight: var(--sg-weight-subtitle); font-size: 1.05rem; }
+/* A PID is read character by character — the job the guidebook gives mono. */
+.pid { font-family: var(--sg-font-mono); font-size: .8em; color: var(--ink-soft); }
+.authors { color: var(--ink-soft); font-size: .92em; margin-top: .15rem; }
+.orcid { font-family: var(--sg-font-mono); font-size: .82em; }
+.desc { margin: .45rem 0 0; }
+
+/* Tags: a WASH of an accent with an ink of its own family. Never text on the
+   pure accent — the theme's table says what that would measure. */
+.tag {
+  display: inline-block; padding: .08em .55em;
+  border-radius: var(--sg-radius-pill); font-family: var(--sg-font-mono);
+  font-size: .76em;
+  background: color-mix(in srgb, var(--sg-info) 16%, transparent);
+  color: var(--sg-info-ink);
+}
+.tag.licence { background: color-mix(in srgb, var(--sg-ok) 22%, transparent);
+               color: var(--sg-ok-ink); }
+.tag.embargo { background: color-mix(in srgb, var(--sg-terracotta) 14%, transparent);
+               color: var(--sg-terracotta); }
+.tag.quiet   { background: color-mix(in srgb, var(--sg-quiet) 35%, transparent);
+               color: var(--sg-text); }
+
+.open { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .7rem;
+        align-items: center; }
+button, .btn {
+  font: inherit; font-size: .88em; padding: .3rem .7rem;
+  border: 1px solid var(--fill); background: var(--fill); color: var(--on-fill);
+  border-radius: var(--sg-radius-sm); cursor: pointer; text-decoration: none;
+  display: inline-block;
+}
+.btn.ghost, button.ghost { background: transparent; color: var(--accent);
+                           border-color: var(--accent); }
+button:hover, .btn:hover { filter: brightness(1.08); }
+
+/* ── the HDT view: one monument, its campaigns over time ────────────────── */
+
+.twin { margin-bottom: 1.6rem; }
+.twin-head { display: flex; align-items: baseline; gap: .55rem;
+             flex-wrap: wrap; margin-bottom: .1rem; }
+.twin-of { color: var(--ink-soft); font-size: .92em; margin-bottom: .7rem; }
+
+/* The timeline is the point of this view: campaigns of ONE thing, in order.
+   A clay rule down the left, one node per study — the stratigraphic reading the
+   guidebook's "layers" motif is about, done in the palette's earth tones. */
+.timeline { position: relative; margin: 0; padding: 0 0 0 1.35rem; list-style: none; }
+.timeline::before {
+  content: ""; position: absolute; left: .3rem; top: .45rem; bottom: .45rem;
+  width: 2px; background: color-mix(in srgb, var(--sg-quiet) 70%, transparent);
+}
+.timeline > li { position: relative; margin-bottom: .55rem; }
+.timeline > li::before {
+  content: ""; position: absolute; left: -1.19rem; top: .95rem;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--sg-clay-beige);
+  box-shadow: 0 0 0 3px var(--paper);
+}
+/* The most recent campaign is the one somebody is looking for: Burnt Orange as
+   a FILL (a 9px dot is a graphic, not text — 3.53 clears the 3:1 that applies). */
+.timeline > li:first-child::before { background: var(--sg-accent); }
+
+.empty { color: var(--ink-soft); padding: 2rem 0; text-align: center; }
+.err { color: var(--sg-warn); }

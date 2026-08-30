@@ -1,0 +1,57 @@
+<!doctype html>
+<!--
+  THE CATALOGUE, as a page. Spec §4's two views — the flat list of studies, and
+  the HDT view that groups one monument's campaigns over time — which existed as
+  JSON and had no face until now.
+
+  Deliberately no build step and no framework: it is served by the process that
+  holds the index, and a catalogue that needed npm to change a label would be a
+  catalogue nobody changes. Same shape as the node console next door.
+
+  What it reads is the SAME public API anybody else reads (`/catalog/studies`,
+  `/catalog/study/{id}/open`) — no private surface, so what this page can show is
+  exactly what the catalogue promises. An anonymous visitor sees the public
+  studies, which is what publishing means.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Studies · StratiGraph catalog</title>
+  <link rel="icon" href="../brand/logo/favicon-deep-charcoal.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#F1EBE3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#2E2D2C" media="(prefers-color-scheme: dark)">
+  <!-- The brand arrives THROUGH catalog.css (`@import "../brand/…"`), relative
+       so it resolves the same at `/catalog/ui/` and behind a proxy. Vendored and
+       same-origin: see `sync-brand.sh`. -->
+  <link rel="stylesheet" href="./catalog.css">
+</head>
+<body>
+  <header class="bar">
+    <img class="mark" src="../brand/logo/favicon-deep-charcoal.svg" alt=""
+         width="22" height="22">
+    <span class="wordmark">StratiGraph</span>
+    <span class="sub">catalog</span>
+    <span class="grow"></span>
+    <button id="view-flat" class="ghost">Studies</button>
+    <button id="view-hdt" class="ghost">By monument</button>
+  </header>
+
+  <main>
+    <h1 id="heading">Studies</h1>
+    <p class="lede" id="lede">Everything this catalogue has published.</p>
+
+    <div class="search">
+      <input id="q" type="search" placeholder="Search titles, authors, places…"
+             autocomplete="off" aria-label="Search studies">
+      <select id="licence" aria-label="Filter by licence">
+        <option value="">Any licence</option>
+      </select>
+    </div>
+
+    <div id="out"><p class="empty">Loading…</p></div>
+  </main>
+
+  <script type="module" src="./catalog.js"></script>
+</body>
+</html>
