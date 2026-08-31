@@ -15,7 +15,25 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # `[rdf]` is what makes /catalog/study/{id}/ttl a real endpoint instead of an
 # honest 501. `[geo]` is deliberately NOT taken: this service never reprojects.
-ARG S3DGRAPHY_SPEC="s3dgraphy[rdf]>=1.6.0.dev13"
+# The s3Dgraphy this image installs: the VERSION from one place, the EXTRAS
+# from this service.
+#
+# `S3DGRAPHY_VERSION` has NO DEFAULT, and that is the whole point rather than an
+# omission. A default here would be a second spelling of a number that must agree
+# with `dev-stack/.env.dev`, and two spellings of one version are two versions the
+# day somebody edits one — which is exactly what happened: this image sat
+# on dev12 while the catalogue and the field assistant had drifted to dev16, in a
+# stack that shares em.json files and one semantic vocabulary. A build without the
+# argument REFUSES, the way `auth.py` refuses a half-configured realm, instead of
+# falling back to a pin nobody chose.
+#
+#   docker build --build-arg S3DGRAPHY_VERSION=<version> -t stratigraph-catalog .
+#
+# The EXTRAS stay here because they are legitimately this service's own: `[rdf]`
+# is what lets a study be served as TTL. A service may choose what it needs; it
+# may not move the version by itself.
+ARG S3DGRAPHY_VERSION
+ARG S3DGRAPHY_EXTRAS="rdf"
 
 WORKDIR /srv/em-catalog
 
@@ -23,8 +41,11 @@ COPY pyproject.toml README.md ./
 # PyJWT and minio are here and not behind a build arg, for the reason StratiGraph Server
 # states: an image that cannot verify a token comes up open, and an image that
 # cannot reach the object store keeps its studies in a process that dies.
-RUN pip install --upgrade pip && \
-    pip install "${S3DGRAPHY_SPEC}" "fastapi>=0.110" "uvicorn[standard]>=0.27" \
+RUN set -eu; \
+    : "${S3DGRAPHY_VERSION:?required — dev-stack/.env.dev holds it}"; \
+    spec="s3dgraphy${S3DGRAPHY_EXTRAS:+[${S3DGRAPHY_EXTRAS}]}==${S3DGRAPHY_VERSION}"; \
+    pip install --upgrade pip && \
+    pip install "$spec" "fastapi>=0.110" "uvicorn[standard]>=0.27" \
                 "PyJWT[crypto]>=2.8" "minio>=7.2"
 
 COPY app ./app
