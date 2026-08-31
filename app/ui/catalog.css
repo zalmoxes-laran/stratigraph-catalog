@@ -153,3 +153,8 @@ button:hover, .btn:hover { filter: brightness(1.08); }
 
 .empty { color: var(--ink-soft); padding: 2rem 0; text-align: center; }
 .err { color: var(--sg-warn); }
+
+/* The language picker: in the bar, quiet, one touch away. */
+.lang { font: inherit; font-size: .82em; padding: .25rem .4rem;
+        border-radius: var(--sg-radius-sm); border: 1px solid var(--sg-line);
+        background: var(--sg-surface); color: var(--sg-text); }

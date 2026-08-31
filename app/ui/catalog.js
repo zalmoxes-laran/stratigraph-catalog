@@ -16,6 +16,8 @@
  *  on the API that served them. */
 const BASE = window.location.pathname.replace(/\/ui(\/.*)?$/, "");
 
+import { LOCALE, mountPicker, t } from "./i18n.js";
+
 const $ = (id) => document.getElementById(id);
 let view = "flat";
 
@@ -53,11 +55,11 @@ function studyCard(study) {
   if (study.visibility && study.visibility !== "public") {
     head.append(el("span", "tag embargo", study.visibility));
   }
-  if (study.embargo_active) head.append(el("span", "tag embargo", "under embargo"));
+  if (study.embargo_active) head.append(el("span", "tag embargo", t("study.embargo")));
   const licence = study.license_effective || study.license;
   if (licence) {
     const tag = el("span", "tag licence", licence);
-    if (study.license_is_default) tag.title = "inherited: the study names none";
+    if (study.license_is_default) tag.title = t("licence.inherited");
     head.append(tag);
   }
   box.append(head);
@@ -82,20 +84,20 @@ function studyCard(study) {
   // a scheme that may have no handler). A page that guessed would offer buttons
   // that fail after the click.
   const open = el("div", "open");
-  const read = el("a", "btn", "Read");
+  const read = el("a", "btn", t("study.read"));
   read.href = `${BASE}/study/${encodeURIComponent(study.id)}/narrative`;
-  read.title = "The study as a story — EMStudio's reader, live";
+  read.title = t("study.read.title");
   const emjson = el("a", "btn ghost", "em.json");
   emjson.href = `${BASE}/study/${encodeURIComponent(study.id)}/emjson`;
-  emjson.title = "The container itself: what every tool opens";
+  emjson.title = t("study.emjson.title");
   const ttl = el("a", "btn ghost", "RDF");
   ttl.href = `${BASE}/study/${encodeURIComponent(study.id)}/ttl`;
-  ttl.title = "The CIDOC projection, as Turtle";
+  ttl.title = t("study.ttl.title");
   open.append(read, emjson, ttl);
 
   if (view === "flat" && study.hc2 && study.hc2.id) {
-    const twin = el("button", "ghost", "Campaigns");
-    twin.title = `Every study of ${study.hc2.name || study.hc2.id}, over time`;
+    const twin = el("button", "ghost", t("hdt.campaigns"));
+    twin.title = t("hdt.every", { name: study.hc2.name || study.hc2.id });
     twin.addEventListener("click", () => { showHdt(study.hc2.id); });
     open.append(twin);
   }
@@ -137,14 +139,14 @@ function params() {
 
 async function showFlat() {
   view = "flat";
-  $("heading").textContent = "Studies";
-  $("lede").textContent = "Everything this catalogue has published.";
+  $("heading").textContent = t("studies.title");
+  $("lede").textContent = t("studies.sub");
   const query = params();
   query.set("view", "flat");
   await render(async () => {
     const data = await get(`/studies?${query}`);
     const studies = data.studies || [];
-    if (!studies.length) return [el("p", "empty", "No studies match.")];
+    if (!studies.length) return [el("p", "empty", t("studies.none"))];
     rememberLicences(studies);
     return studies.map(studyCard);
   });
@@ -152,16 +154,15 @@ async function showFlat() {
 
 async function showHdt(only) {
   view = "hdt";
-  $("heading").textContent = "By monument";
-  $("lede").textContent =
-    "One heritage object, its campaigns over time — the view the digital twin exists for.";
+  $("heading").textContent = t("hdt.title");
+  $("lede").textContent = t("hdt.sub");
   const query = params();
   query.set("view", "hdt");
   await render(async () => {
     const data = await get(`/studies?${query}`);
     let groups = data.groups || [];
     if (only) groups = groups.filter((g) => g.hc2 && g.hc2.id === only);
-    if (!groups.length) return [el("p", "empty", "Nothing grouped by a digital twin yet.")];
+    if (!groups.length) return [el("p", "empty", t("hdt.none"))];
     rememberLicences(groups.flatMap((g) => g.studies || []));
     return groups.map(twinGroup);
   });
@@ -170,13 +171,13 @@ async function showHdt(only) {
 async function render(build) {
   const out = $("out");
   out.innerHTML = "";
-  out.append(el("p", "empty", "Loading…"));
+  out.append(el("p", "empty", t("loading")));
   let nodes;
   try {
     nodes = await build();
   } catch (error) {
     out.innerHTML = "";
-    out.append(el("p", "empty err", `Cannot reach the catalogue: ${error.message}`));
+    out.append(el("p", "empty err", t("unreachable", { error: error.message })));
     return;
   }
   out.innerHTML = "";
@@ -200,6 +201,27 @@ function rememberLicences(studies) {
   }
 }
 
+
+// ── the screen, repainted in the active language ────────────────────────────
+//
+// The two views already write their own heading and lede, so this repaints the
+// chrome around them and then asks the active view to draw itself again — a
+// change of language must not cost a round trip.
+function paintStrings() {
+  document.documentElement.lang = LOCALE;
+  document.title = t("app.title");
+  $("app-sub").textContent = t("app.sub");
+  $("view-flat").textContent = t("tab.studies");
+  $("view-hdt").textContent = t("tab.hdt");
+  $("q").placeholder = t("search.placeholder");
+  $("q").setAttribute("aria-label", t("search.label"));
+  $("licence").setAttribute("aria-label", t("licence.label"));
+  const any = $("licence-any");
+  if (any) any.textContent = t("licence.any");
+  // …and the active view draws itself again, from the query it already has.
+  void (view === "hdt" ? showHdt() : showFlat());
+}
+
 // ── wiring ──────────────────────────────────────────────────────────────────
 
 $("view-flat").addEventListener("click", () => void showFlat());
@@ -214,4 +236,8 @@ $("q").addEventListener("input", () => {
   typing = window.setTimeout(() => void (view === "hdt" ? showHdt() : showFlat()), 250);
 });
 
-await showFlat();
+// The language first, with its picker: everything after is drawn once, in the
+// right language, instead of flickering through English.
+document.documentElement.lang = LOCALE;
+mountPicker($("lang"), paintStrings);
+paintStrings();

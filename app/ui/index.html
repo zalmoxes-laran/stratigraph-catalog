@@ -31,8 +31,12 @@
     <img class="mark" src="../brand/logo/favicon-deep-charcoal.svg" alt=""
          width="22" height="22">
     <span class="wordmark">StratiGraph</span>
-    <span class="sub">catalog</span>
+    <span class="sub" id="app-sub">catalog</span>
     <span class="grow"></span>
+    <!-- The language picker, in the bar: one touch, and each option is written
+         IN its own language so somebody who cannot read the current one still
+         finds theirs. -->
+    <select id="lang" class="lang"></select>
     <button id="view-flat" class="ghost">Studies</button>
     <button id="view-hdt" class="ghost">By monument</button>
   </header>
@@ -45,7 +49,7 @@
       <input id="q" type="search" placeholder="Search titles, authors, places…"
              autocomplete="off" aria-label="Search studies">
       <select id="licence" aria-label="Filter by licence">
-        <option value="">Any licence</option>
+        <option value="" id="licence-any">Any licence</option>
       </select>
     </div>
 
