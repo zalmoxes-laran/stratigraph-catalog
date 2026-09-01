@@ -14,8 +14,9 @@ Heriverse reads the container shape). Any client that does nothing else with thi
 answer can still act on that one field, which is the definition of a useful
 contract.
 
-**The scheme is now the ECOSYSTEM's** — `stratigraph://open?study=…`
-(2026-08-29). It used to be `emstudio://`, which was a scheme owned by one
+**The scheme is now the ECOSYSTEM's** — `stratigraph://open?study=…&catalog=…`
+(2026-08-29; the `catalog` half added 2026-09-04, when the link was pressed for
+the first time and refused for naming nothing a consumer could resolve). It used to be `emstudio://`, which was a scheme owned by one
 consumer: the opposite of what a handoff contract is for. StratiGraph Server
 defines the same scheme for a ROOM (`stratigraph-server/app/handoff.py`), and the
 two are deliberately one namespace with two entry points — the Catalog opens a
@@ -66,14 +67,44 @@ def _base(*names: str, default: str = "") -> str:
     return default
 
 
+def public_base() -> str:
+    """The address a link must NAME for this catalogue — configuration, always.
+
+    A `stratigraph://open?study=…` that carries only an id is a link **nobody can
+    follow**: the consumer is handed a study and no way to resolve it. Measured on
+    4 September — EMStudio's `parseHandoff` refused it with «the link names no
+    room», and the refusal went to `logWarn`, i.e. into the app's console and not
+    in front of the person who had just pressed the button. A button that cannot
+    work by construction, failing in silence.
+
+    So the link names the catalogue too. And the base is **configuration, never a
+    request parameter** — the rule the module docstring already states for the app
+    bases, and the reason is the same one: a link a caller could aim is a
+    redirector, and this one would send somebody's editor to fetch a "study" from
+    an address a stranger chose.
+
+    `EM_CATALOG_PUBLIC_URL` when set; otherwise empty, and the caller supplies
+    what it knows (`open_targets(catalog_base=…)`, which the route fills from the
+    request). Empty is not a crash: the study half of the link is simply left out,
+    and `web`/`emjson` still work — the same discipline as the missing app base.
+    """
+    return _base("EM_CATALOG_PUBLIC_URL")
+
+
 def open_targets(study_id: str, *, emjson_url: str,
-                 apps: Optional[List[str]] = None) -> Dict[str, Any]:
+                 apps: Optional[List[str]] = None,
+                 catalog_base: str = "") -> Dict[str, Any]:
     """How to open this study, per app.
 
     `emjson_url` is the PUBLIC url of the container — the caller builds it,
     because only the caller knows how it is being reached (the same
     internal/public split StratiGraph Server writes down: a document carries the form the
     *reader* can fetch).
+
+    `catalog_base` is the same fact for the SCHEME link: where this catalogue can
+    be reached by the software that receives the link. Configuration first
+    (`EM_CATALOG_PUBLIC_URL`), else whatever the caller passes — and never a query
+    parameter.
     """
     wanted = [a for a in (apps or APPS) if a in APPS]
     if not wanted:
@@ -81,6 +112,7 @@ def open_targets(study_id: str, *, emjson_url: str,
                          f"{', '.join(APPS)}")
 
     quoted = urllib.parse.quote(str(study_id), safe="")
+    catalog = (public_base() or str(catalog_base or "")).rstrip("/")
     targets: Dict[str, Any] = {}
 
     for app in wanted:
@@ -93,8 +125,14 @@ def open_targets(study_id: str, *, emjson_url: str,
                         f"{urllib.parse.quote(emjson_url, safe='')}"
                         if web else None),
                 # the ecosystem's scheme (§6, and `handoff.py` in the server):
-                # registered in EMStudio's desktop bundle, nowhere else yet
-                "scheme": f"{SCHEME}://open?study={quoted}",
+                # registered in EMStudio's desktop bundle, nowhere else yet.
+                #
+                # TWO parameters, and the second is what makes it followable: an
+                # id alone names a study nobody can resolve. `catalog` is the
+                # address of THIS catalogue, from configuration.
+                "scheme": (f"{SCHEME}://open?study={quoted}"
+                           + (f"&catalog={urllib.parse.quote(catalog, safe='')}"
+                              if catalog else "")),
                 "proposed": ["scheme"],
                 "registered_in": list(SCHEME_REGISTERED_IN),
                 "note": "the custom scheme opens in EMStudio's DESKTOP build, "

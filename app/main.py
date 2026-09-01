@@ -201,6 +201,22 @@ def _card_of(doc: Dict[str, Any], study_id: str) -> Dict[str, Any]:
             detail=f"not a readable em.json container: {exc}") from None
 
 
+def _public_base(request: Request) -> str:
+    """This service's PUBLIC base — one derivation, two callers.
+
+    `EM_CATALOG_PUBLIC_URL` when a deployment names one, otherwise the address the
+    caller actually used. It reads the request rather than a header of our
+    choosing, which is only safe because uvicorn is told to trust the proxy
+    (`--proxy-headers --forwarded-allow-ips *` in the Dockerfile) — without those
+    two flags this returns the INTERNAL address and the catalogue hands out links
+    that an https page cannot fetch. That is not a hypothesis: it is what
+    `EM_CATALOG_PUBLIC_URL: http://localhost:8010` was papering over in the dev
+    stack, and what the browser reported as `Failed to fetch`.
+    """
+    configured = (os.environ.get("EM_CATALOG_PUBLIC_URL") or "").strip()
+    return (configured or str(request.base_url)).rstrip("/")
+
+
 def _container_url(request: Request, study_id: str) -> str:
     """The PUBLIC url of the container — the form the reader can fetch.
 
@@ -210,9 +226,7 @@ def _container_url(request: Request, study_id: str) -> str:
     parameter: an "open in" answer that a caller could point anywhere is a
     redirector, not a catalogue.
     """
-    configured = (os.environ.get("EM_CATALOG_PUBLIC_URL") or "").strip()
-    base = configured.rstrip("/") if configured else str(request.base_url).rstrip("/")
-    return f"{base}{_container_path(study_id)}"
+    return f"{_public_base(request)}{_container_path(study_id)}"
 
 
 def _container_path(study_id: str) -> str:
@@ -802,7 +816,13 @@ def open_study(study_id: str, request: Request,
     apps = [app] if app else None
     try:
         return open_targets(study_id, emjson_url=_container_url(request, study_id),
-                            apps=apps)
+                            apps=apps,
+                            # …and the catalogue's own address, so the scheme link
+                            # names something a consumer can resolve. Same source
+                            # as the container URL — configuration when there is
+                            # any, otherwise the request, which is right by
+                            # definition: whoever asked can reach what they asked.
+                            catalog_base=_public_base(request))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 

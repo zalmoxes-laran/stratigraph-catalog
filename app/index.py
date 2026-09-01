@@ -92,10 +92,44 @@ def group_by_hdt(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for key, bucket in groups.items():
         bucket["key"] = key
         bucket["count"] = len(bucket["studies"])
+        bucket["label"] = group_label(bucket)
         out.append(bucket)
     # named groups first, in a stable order; the homeless last
     out.sort(key=lambda g: (g["key"] is None, str(g["key"] or "")))
     return out
+
+
+def group_label(bucket: Dict[str, Any]) -> str:
+    """The group's NAME, as a STRING, because a page has to print something.
+
+    The bug this closes was visible the day real data arrived: the front door's
+    monument cards read `[object Object]`. `hc2` and `hc1` are ENTITIES
+    (`{id, name, iri}`); the page reached for
+    `group.label || group.name || group.hdt || group.hc2` and the last fallback
+    was an object, so JavaScript printed what JavaScript prints.
+
+    The page was not the side to repair. **This** side has the name — it built the
+    entity. A consumer forced to reach into a nested object for a title is a
+    consumer inventing a presentation rule, and every consumer invents a
+    different one; that is how the second and third surface get it wrong too.
+
+    Empty for the homeless group (`hc2: None`): it is a real bucket — "which of my
+    studies have no twin yet" is a curator's first question — but it is not a
+    monument, and a made-up name would put a card on the front door for something
+    that does not exist. A caller that shows it chooses its own word.
+    """
+    for entity in (bucket.get("hc2"), bucket.get("hc1")):
+        if isinstance(entity, dict):
+            name = str(entity.get("name") or "").strip()
+            if name:
+                return name
+    # no name anywhere: the IRI or the id, which at least identifies it
+    for entity in (bucket.get("hc2"), bucket.get("hc1")):
+        if isinstance(entity, dict):
+            fallback = str(entity.get("iri") or entity.get("id") or "").strip()
+            if fallback:
+                return fallback
+    return ""
 
 
 def group_by_hc1(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -129,6 +163,10 @@ def group_by_hc1(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for key, bucket in groups.items():
         bucket["key"] = key
         bucket["count"] = len(bucket["studies"])
+        # …and its name, for the same reason as the HDT view above: a group that
+        # makes its consumers dig for a title gets a different title on every
+        # surface, and one of them will be `[object Object]`.
+        bucket["label"] = group_label(bucket)
         # a curator reading this wants to know which of them are landscapes
         bucket["kinds"] = sorted({str(c.get("kind") or "site")
                                   for c in bucket["studies"]})

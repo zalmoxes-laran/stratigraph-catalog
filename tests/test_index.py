@@ -14,7 +14,8 @@ import urllib.request
 
 import pytest
 
-from app.index import (CouchDbCatalogIndex, SqliteCatalogIndex, group_by_hdt,
+from app.index import (CouchDbCatalogIndex, SqliteCatalogIndex, group_by_hc1,
+                       group_by_hdt,
                        index_from_env)
 from app.store import InMemoryContainerStore
 
@@ -188,6 +189,78 @@ def test_the_named_entity_wins_over_the_iri_only_stub():
     assert group_by_hdt(cards)[0]["hc1"] == named
     # …and the order must not decide it
     assert group_by_hdt(list(reversed(cards)))[0]["hc1"] == named
+
+
+# ── a group carries its own NAME, because a page has to print something ─────
+#
+# The bug this closes was visible the day real data arrived (4 September 2026):
+# the node's front door showed monument cards titled `[object Object]`. `hc2` and
+# `hc1` are entities — `{id, name, iri}` — and the page's fallback chain ended at
+# one, so JavaScript printed what JavaScript prints.
+#
+# The page was not the side to repair. THIS side built the entity and has the
+# name. A consumer forced to reach into a nested object for a title is a consumer
+# inventing a presentation rule, and every consumer invents a different one: that
+# is how the second and third surfaces get it wrong too.
+
+def test_every_named_group_carries_a_STRING_label():
+    cards = [
+        {"id": "s1", "hc2": {"id": "h1", "iri": "iri:1", "name": "Sarmizegetusa HDT"},
+         "hc1": {"id": "e1", "name": "Sarmizegetusa Regia"}},
+        {"id": "s2", "hc2": {"id": "h2", "iri": "iri:2"},
+         "hc1": {"id": "e2", "name": "Porta Marina"}},
+    ]
+    groups = {g["key"]: g for g in group_by_hdt(cards)}
+    assert groups["iri:1"]["label"] == "Sarmizegetusa HDT", \
+        "the twin's own name when it has one"
+    assert groups["iri:2"]["label"] == "Porta Marina", \
+        "…and the ENTITY's name when the twin is unnamed"
+    for group in groups.values():
+        assert isinstance(group["label"], str)
+
+
+def test_a_group_with_no_name_anywhere_falls_back_to_something_PRINTABLE():
+    """Never an object, and never empty when there is an identifier to show: a
+    card with no title at all is a card nobody can cite."""
+    groups = group_by_hdt([
+        {"id": "s", "hc2": {"id": "h9", "iri": "iri:9"}, "hc1": None}])
+    assert groups[0]["label"] == "iri:9"
+
+
+def test_the_HOMELESS_group_is_labelled_EMPTY_on_purpose():
+    """It is a real bucket — "which of my studies have no twin yet" is a
+    curator's first question — but it is not a monument, and a made-up name would
+    put a card on a front door for something that does not exist."""
+    groups = group_by_hdt([{"id": "s", "hc2": None, "hc1": None}])
+    assert groups[0]["label"] == ""
+
+
+def test_the_HC1_grouping_carries_a_label_too():
+    """Same shape, same trap. Fixing one of two groupings is how the bug comes
+    back on the other surface."""
+    groups = group_by_hc1([
+        {"id": "s", "hc1": {"id": "e1", "name": "Villa di Aiano"}}])
+    assert groups[0]["label"] == "Villa di Aiano"
+
+
+def test_NO_GROUPING_EVER_PUTS_AN_OBJECT_WHERE_A_TITLE_GOES():
+    """The general form, so the next grouping inherits the guarantee.
+
+    Whatever a group calls its title, it is a string. This is the assertion that
+    would have failed on 4 September, before a browser was ever opened.
+    """
+    cards = [
+        {"id": "s1", "hc2": {"id": "h1", "iri": "iri:1", "name": "A"},
+         "hc1": {"id": "e1", "name": "B"}, "kind": "site"},
+        {"id": "s2", "hc2": None, "hc1": None, "kind": "landscape"},
+    ]
+    for grouping in (group_by_hdt, group_by_hc1):
+        for group in grouping(cards):
+            for key in ("label", "key"):
+                assert not isinstance(group.get(key), dict), \
+                    f"{grouping.__name__}: {key} is an object — a page printing " \
+                    f"it says [object Object]"
+            assert isinstance(group["label"], str)
 
 
 # ── the DEPLOY index, against a real CouchDB when there is one ───────────────

@@ -64,4 +64,21 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request,sys; \
 sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# `--proxy-headers`, and it is load-bearing rather than hygiene: this service is
+# the one that WRITES its own address into an answer (`_container_url`, the
+# `emjson` of every "open in…"), and it derives it from the request. Without
+# these two flags Starlette sees the INTERNAL request — `http://…:8000` — and the
+# catalogue hands out a link that an https page cannot fetch: measured in Chrome
+# as `Failed to fetch`, blocked as mixed content, on a study that was perfectly
+# fine.
+#
+# That is what `EM_CATALOG_PUBLIC_URL` was papering over. The env var stays as an
+# override for a proxy that does not forward, but it is no longer needed to be
+# CORRECT, and it is not set in the dev stack any more.
+#
+# `forwarded-allow-ips=*` because the proxy's address inside a container network
+# is assigned by the network, not by us. It is safe exactly to the extent that
+# nothing but the proxy can reach this port — which is the arrangement in both
+# compose files (no published port on the internal network in production) and is
+# the same assumption every reverse-proxied app makes.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",      "--proxy-headers", "--forwarded-allow-ips", "*"]
