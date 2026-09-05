@@ -68,6 +68,7 @@ from .index import describe as index_describe
 from .index import group_by_hc1, group_by_hdt, index_from_env
 from .store import describe as store_describe
 from .store import store_from_env
+from .twins import DEFAULT_LIMIT, search_twins, sources_from_env, untwinned_count
 
 try:  # the whole point of the service; a clear failure beats a mysterious one
     from s3dgraphy import api as em
@@ -170,6 +171,11 @@ def _health() -> Health:
             # /ttl that quietly carries tombstones
             "ttl_publish_mode": importable("s3dgraphy.dissemination"),
             "hdt_view": True,
+            # …and the other direction: «which twins do I know», the register a
+            # tool asks BEFORE attaching to one. A client can tell a build that
+            # has it from one that does not, instead of reading a 404 as «no
+            # twins here».
+            "twin_registry": True,
             # whether `/study/{id}/narrative` will answer with a page or with an
             # honest 501 — a client can read it here instead of discovering it
             # by trying, and an operator can tell a missing mount from a bug
@@ -445,6 +451,49 @@ def _is_authenticated(request: Request, token: Optional[str]) -> bool:
         # turn an expired session into "the catalogue is down".
         return False
     return False
+
+
+@catalog_public.get("/twins", tags=["views"])
+def twin_registry(request: Request,
+                  q: Optional[str] = Query(default=None,
+                                           description="free text: a twin's "
+                                                       "name, its entity, or "
+                                                       "either identity"),
+                  limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=200),
+                  token: Optional[str] = Query(default=None)) -> Dict[str, Any]:
+    """**Which twins do I know** — the register, asked before attaching to one.
+
+    The mirror of `/hdt/{hc2}`: that one is «which studies does this twin have»,
+    this one is «is there already a twin for what I am digging». They are two
+    questions and the second one had no answer, which is how a catalogue full of
+    twins still lets a fourth campaign mint a fourth twin for one monument.
+
+    **A suggestion, never a gate.** Nothing in this service requires a study to
+    name a twin, and this route is the reason it does not have to: it lets a
+    tool OFFER the twins that exist instead of demanding that one be chosen.
+    The count of studies that have none (`untwinned`) is in the answer for the
+    same reason — the homeless bucket has been a real bucket since the first
+    day, and a register that reported it as zero missing links would be lying
+    about the ordinary case.
+
+    **Federated in shape, with one source built.** `sources` lists every
+    register asked and what it said about itself, and every twin names the one
+    it came from; the collaborative cloud is DECLARED as not configured and
+    returns nothing. See `app/twins.py` for why the shape comes first.
+
+    Anonymous callers see the twins of the PUBLIC studies, by the same rule and
+    the same line as `/studies`.
+    """
+    authenticated = _is_authenticated(request, token)
+
+    def visible() -> List[Dict[str, Any]]:
+        cards = INDEX.search()
+        return cards if authenticated else [c for c in cards if is_public_now(c)]
+
+    answer = search_twins(sources_from_env(visible),
+                          query=(q or "").strip(), limit=limit)
+    answer["untwinned"] = untwinned_count(visible())
+    return answer
 
 
 @catalog_public.get("/hdt/{hc2:path}", tags=["views"])

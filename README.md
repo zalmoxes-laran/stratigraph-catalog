@@ -41,6 +41,35 @@ version is the container's own (P3). The catalogue *exposes and indexes* them.
 * **HDT** — the N studies of one heritage object over time. Sarmizegetusa in
   1978, in 2013, in 2026: three containers, one Heritage Digital Twin.
 
+## …and the register: which twins do I know
+
+The views above answer *«which studies does this twin have»*. `/catalog/twins`
+answers the other direction — *«is there already a twin for what I am digging,
+or am I the first?»* — because without it a fourth campaign mints a fourth twin
+for one monument and nobody finds out until a publication.
+
+**It suggests; it never gates.** A study with no twin is a citizen: the register
+counts them (`untwinned`) instead of treating them as gaps. Somebody who has just
+opened a trench does not yet know what they are finding, and a tool that demands
+the answer collects a lie.
+
+Each result carries the three facts an attachment is decided on — **which
+register** answered, **who is already working on it**, and **how many studies**
+hang on it — plus whether it is **provisional** (a twin known only by the id its
+own document minted: legitimate, ordinary, and precisely the twin not to attach
+yourself to when it is somebody else's).
+
+**Federated in shape, one source built.** The answer always lists every register
+asked and what each said about itself; the collaborative cloud appears as
+`not_configured` and returns nothing. Nothing is simulated: «nobody has one» and
+«I only asked one of two places» are different sentences, and a mock would make
+the day the cloud arrives indistinguishable from the day before it. Adding a
+second source is a class with `describe`/`search` and one line in
+`sources_from_env` (`app/twins.py`).
+
+**Merging two of them is designed and not built** — `docs/twin-merge.md`, which
+also says which way of doing it cannot be undone.
+
 ## The two formats are NOT interchangeable (spec §5)
 
 | route | what it is | what it is for |
@@ -120,6 +149,7 @@ under `capabilities.reading_page`.
 GET    /health                                  liveness, capabilities, which store/index
 GET    /catalog/studies?q=&author=&orcid=&license=&hc2=&hc1=&view=flat|hdt
 GET    /catalog/hdt/{hc2}                       one heritage object, its studies
+GET    /catalog/twins?q=&limit=                 the REGISTER: which twins exist
 GET    /catalog/study/{id}                      the card
 GET    /catalog/study/{id}/emjson               the container
 GET    /catalog/study/{id}/ttl                  the published projection
@@ -202,6 +232,7 @@ store.
 | `OIDC_ISSUER` (or `TOKEN_ENDPOINT`), `OIDC_AUDIENCE` (or `CLIENT_ID_em`) | Keycloak. Half-configured → the process refuses to start |
 | `EM_CATALOG_READER` | the built EMStudio reader — the **`dist/` directory**, shell plus `assets/`. A `…/reader.html` path is accepted too and read as "the shell" (its parent is the dist). Unset → the sibling checkout. Absent → an honest 501 |
 | `EM_CATALOG_PUBLIC_URL` | the public base written into "open in" answers, when the proxy does not forward the host |
+| `EM_CATALOG_LABEL` | how this catalogue names ITSELF in a federated twin search. Unset → «this catalogue», which is true and useless exactly when something else is federated with it |
 | `EM_CATALOG_EMSTUDIO_URL`, `EM_CATALOG_HERIVERSE_URL` | where those apps live, for the deep links |
 
 ## The seam for 3DR
