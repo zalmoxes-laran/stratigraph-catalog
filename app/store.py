@@ -38,6 +38,14 @@ STUDY_PREFIX = "studies/"
 #: The suffix, so a human browsing the bucket can see what these objects are.
 STUDY_SUFFIX = ".em.json"
 
+#: Where the register's OWN facts live — things that are not studies and must
+#: never be read back as one. Beside the containers because they have to survive
+#: the same things the containers survive: `reindex` rebuilds the index from the
+#: bucket, so anything that lives only in the index is gone at the next rebuild,
+#: and `reindex` is not an emergency procedure — it is the ordinary way this
+#: service repairs itself.
+REGISTRY_PREFIX = "registry/"
+
 MEDIA_TYPE = "application/json"
 
 
@@ -93,6 +101,20 @@ class ContainerStore(Protocol):
     def remove(self, study_id: str) -> bool:
         """True when something was there to remove."""
 
+    def get_blob(self, key: str) -> Optional[bytes]:
+        """A raw object by its FULL key — for the register's own facts.
+
+        Deliberately separate from `get`: that one takes a study id and knows
+        where studies live. This one is for objects that are not studies and
+        must never be listed as one.
+        """
+
+    def put_blob(self, key: str, data: bytes) -> Dict[str, Any]:
+        """Write a raw object; return `{key, sha256, size}`."""
+
+    def remove_blob(self, key: str) -> bool:
+        """True when something was there to remove."""
+
 
 class InMemoryContainerStore:
     """For tests and a laptop run — and it says so.
@@ -120,11 +142,29 @@ class InMemoryContainerStore:
         return json.loads(data.decode("utf-8")) if data is not None else None
 
     def list(self) -> List[str]:
-        return sorted(study_id_from_key(k) for k in self._blobs)
+        # FILTERED, as MinIO's already was. Without this the two implementations
+        # disagree the moment anything that is not a study is written to the
+        # store: MinIO lists `prefix=studies/` and this one listed everything,
+        # so a register file would come back as a study id and `reindex` would
+        # try to parse it. Same bucket, same answer.
+        return sorted(study_id_from_key(k) for k in self._blobs
+                      if k.startswith(STUDY_PREFIX) and k.endswith(STUDY_SUFFIX))
 
     def remove(self, study_id: str) -> bool:
         with self._lock:
             return self._blobs.pop(object_key(study_id), None) is not None
+
+    def get_blob(self, key: str) -> Optional[bytes]:
+        return self._blobs.get(str(key))
+
+    def put_blob(self, key: str, data: bytes) -> Dict[str, Any]:
+        with self._lock:
+            self._blobs[str(key)] = bytes(data)
+        return {"key": str(key), "sha256": bytes_digest(data), "size": len(data)}
+
+    def remove_blob(self, key: str) -> bool:
+        with self._lock:
+            return self._blobs.pop(str(key), None) is not None
 
 
 class MinioContainerStore:
@@ -223,6 +263,41 @@ class MinioContainerStore:
                 return False
             raise
         self._client.remove_object(self.bucket, key)
+        return True
+
+    def get_blob(self, key: str) -> Optional[bytes]:
+        from minio.error import S3Error  # type: ignore
+
+        response = None
+        try:
+            response = self._client.get_object(self.bucket, str(key))
+            return response.read()
+        except S3Error as exc:
+            if exc.code in ("NoSuchKey", "NoSuchObject", "NotFound"):
+                return None
+            raise
+        finally:
+            if response is not None:
+                response.close()
+                response.release_conn()
+
+    def put_blob(self, key: str, data: bytes) -> Dict[str, Any]:
+        import io as _io
+
+        self._client.put_object(self.bucket, str(key), _io.BytesIO(data),
+                                len(data), content_type=MEDIA_TYPE)
+        return {"key": str(key), "sha256": bytes_digest(data), "size": len(data)}
+
+    def remove_blob(self, key: str) -> bool:
+        from minio.error import S3Error  # type: ignore
+
+        try:
+            self._client.stat_object(self.bucket, str(key))
+        except S3Error as exc:
+            if exc.code in ("NoSuchKey", "NoSuchObject", "NotFound"):
+                return False
+            raise
+        self._client.remove_object(self.bucket, str(key))
         return True
 
 

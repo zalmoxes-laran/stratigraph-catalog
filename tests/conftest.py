@@ -97,6 +97,12 @@ def client(monkeypatch):
 
     monkeypatch.setattr(main_module, "STORE", InMemoryContainerStore())
     monkeypatch.setattr(main_module, "INDEX", SqliteCatalogIndex(":memory:"))
+    # …and a register nobody else wrote either. The alias table is module-level
+    # state (it is read on every card, so it cannot take a round trip to the
+    # store), which means without this a merge made in one test would still be
+    # true in the next one.
+    from app import aliases
+    aliases.reset()
     with TestClient(main_module.app) as test_client:
         yield test_client
 

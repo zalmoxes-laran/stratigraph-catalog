@@ -1,9 +1,30 @@
-# Merging two twins — designed, not built
+# Merging two twins — decided, and built as an alias
+
+> ## THE DECISION · 1 October 2026 · E.D.
+>
+> **Alias only. No document is ever touched.**
+>
+> The reason is ownership before it is technique, and it is §1 below: the
+> documents carrying the losing key belong to **other people** — some published
+> and immutable, some on a laptop in a trench with no network, some belonging to
+> a project that ended. A merge that had to edit them could only ever
+> half-happen, **and a half-merge is worse than two twins, because it looks
+> finished.**
+>
+> The experimental confirmation that closed it is §5: the CRDT records **when**
+> and **by whom**, never **what was there before**. The superseded value lives
+> only in `FieldOutcome.loser_value`, which is a report and not a record — so
+> rewriting a key inside a document would be a one-way door.
+>
+> Built on 1 October 2026: `app/aliases.py`, `POST /catalog/twins/merge`,
+> `POST /catalog/twins/unmerge`, `GET /catalog/twins/aliases`, and the alias
+> applied in one place (`index.hdt_key`).
 
 *30 September 2026. Written after building the twin register (`app/twins.py`),
 and deliberately stopping before the merge. Everything below was measured
 against the code that exists, not imagined: where a claim comes from a
-measurement, the measurement is named.*
+measurement, the measurement is named. The sections are kept as they were
+written; where the build answered one of them, it says so.*
 
 Two people excavate the same monument, neither knows about the other, and each
 makes their own digital twin. That is not a mistake — it is the correct outcome
@@ -139,11 +160,39 @@ write and the record of what it replaced are **one act**, exactly as
 `set_field` and `set_field_clock` were made one act in P4.1b for the same
 reason.
 
-**This is a decision for E.D., and it is why the merge was not built tonight.**
+**Decided on 1 October 2026: alias only.** Documents are not rewritten, so the
+one-way door is never opened. If that is ever revisited, the condition above
+stands and is not negotiable: the write and the record of what it replaced must
+be **one act**.
 
 ---
 
-## 6 · What a merge needs before it can be built
+## 6 · What a merge needed before it could be built — and where each one landed
+
+*Built 1 October 2026. Each line now names the thing that answers it.*
+
+| requirement | where it is |
+|---|---|
+| a durable home for the alias table | `registry/twin-aliases.json` in the **object store**, read at startup and re-read by `reindex` (`app/aliases.py`) |
+| `canonical_key()` applied in one place | `index.hdt_key()`, called by `group_by_hdt` **and** `_hdt_keys` — the two places that used to derive it |
+| who may merge, recorded | `POST /catalog/twins/merge` on the authenticated router; the author comes from the TOKEN, never the body |
+| the un-merge as a first-class action | `aliases.unmerge` / `POST /catalog/twins/unmerge` |
+| `/hdt/{loser}` says what happened | 200 with `merged_into`, `merged_by`, `merged_at` — not a 404, not a silent redirect |
+| the panel side | **NOT built** — it is EMStudio's, and it has its own moment |
+| a rule for merging two provisionals | below, and there is nothing to build |
+
+### Merging two provisionals
+
+Neither has a shared key, so there is nothing to alias. The rule, written down
+so nobody invents a second mechanism for it:
+
+> One of them has to acquire a key first. **A merge of two provisionals is a
+> registration followed by an alias** — the two operations that already exist,
+> in that order.
+
+### The original list
+
+
 
 * a durable home for the alias table (an object-store prefix beside the
   containers, read at startup and after `reindex`);
@@ -179,3 +228,8 @@ not enforce it would be read charitably rather than accurately.
 The ask, when somebody is next in that file: let `_hdt_of` carry
 `hdt_status` and (once merges exist) `hdt_merged_from` onto the `hc2` dict. Two
 lines, and it turns a derivation into a record.
+
+**Done, 1 October 2026** — two lines in `src/s3dgraphy/study.py::_hdt_of`, on
+`s3dgraphy_v1.6dev` (that file does not exist on `main`; see the report). The
+card's `hc2` now carries `hdt_status` and `hdt_merged_from`, and the catalogue
+reads a record instead of inferring one from an absence.

@@ -61,11 +61,12 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import aliases
 from .auth import AuthDependency, authenticator
 from .deeplink import APPS, open_targets
 from .deeplink import describe as deeplink_describe
 from .index import describe as index_describe
-from .index import group_by_hc1, group_by_hdt, index_from_env
+from .index import group_by_hc1, group_by_hdt, hdt_key, index_from_env
 from .store import describe as store_describe
 from .store import store_from_env
 from .twins import DEFAULT_LIMIT, search_twins, sources_from_env, untwinned_count
@@ -107,6 +108,18 @@ app = FastAPI(
 #: watching — rather than on the first request, when nobody is.
 STORE = store_from_env()
 INDEX = index_from_env()
+
+# THE ALIASES, read at startup from the object store — the same place the
+# containers are, and the reason is in `aliases.py`: `reindex` rebuilds the
+# index from the bucket, so a table that lived in the index would be gone at
+# the next rebuild, and rebuilding is the ordinary way this service repairs
+# itself. A store that cannot answer leaves the table empty and the catalogue
+# working, because an unreadable register must not be a service that will not
+# start.
+try:
+    aliases.load(STORE)
+except Exception as exc:                      # noqa: BLE001 — reported, not fatal
+    print(f"[catalog] twin aliases unavailable at startup: {exc}")
 
 #: Everything that WRITES, or that reads something not published, sits here.
 catalog = APIRouter(prefix="/catalog", dependencies=[AuthDependency])
@@ -506,16 +519,40 @@ def hdt_view(hc2: str, request: Request,
     whose twin happened to be identified by a bare id.
     """
     authenticated = _is_authenticated(request, token)
-    cards = INDEX.search(hc2=hc2)
+    # THE MERGED KEY STILL ANSWERS. Not a 404 — a twin that was merged did not
+    # stop existing — and not a silent redirect either: somebody who saved the
+    # old key deserves to be told what became of it, in the body, rather than
+    # to find the right studies under a key they never asked for.
+    asked = str(hc2)
+    canonical = aliases.canonical_key(asked) or asked
+    cards = INDEX.search(hc2=canonical)
+    if canonical != asked:
+        # The index may still be holding the pre-merge spelling (a rebuild has
+        # not necessarily happened yet), so ask under both and let the grouping
+        # put them together.
+        seen = {c.get("id") for c in cards}
+        cards = cards + [c for c in INDEX.search(hc2=asked)
+                         if c.get("id") not in seen]
     if not authenticated:
         cards = [c for c in cards if is_public_now(c)]
     if not cards:
         raise HTTPException(status_code=404,
                             detail=f"no studies for the digital twin {hc2!r}")
     groups = group_by_hdt(cards)
-    return {"hc2": hc2, "count": len(cards),
-            "hc1": groups[0].get("hc1") if groups else None,
-            "studies": cards}
+    body: Dict[str, Any] = {
+        "hc2": canonical, "count": len(cards),
+        "hc1": groups[0].get("hc1") if groups else None,
+        "studies": cards,
+        # what this key absorbed, so a reader can see the group is a union
+        "merged_from": aliases.merged_from(canonical),
+    }
+    if canonical != asked:
+        record = aliases.entry(asked) or {}
+        body["asked"] = asked
+        body["merged_into"] = canonical
+        body["merged_by"] = record.get("by")
+        body["merged_at"] = record.get("at")
+    return body
 
 
 @catalog_public.get("/hc1/{hc1:path}", tags=["views"])
@@ -901,6 +938,84 @@ class Reindexed(BaseModel):
     unreadable: List[str] = Field(default_factory=list)
 
 
+def _merge_author(principal: Dict[str, Any]) -> str:
+    """Who is doing this, out of the TOKEN and never out of the request body.
+
+    An author a caller could type is an author anybody could type, and the whole
+    point of recording one is that the decision can be argued with later.
+    """
+    # DEV MODE SAYS SO ON THE RECORD. With no OIDC configured `require_token`
+    # hands back `{"sub": "anonymous", "em_dev_mode": True}`, and a register that
+    # wrote that down as plain "anonymous" would look, three years later, exactly
+    # like a merge somebody signed. The whole reason to record an author is that
+    # the decision can be argued with; an author who cannot be traced has to be
+    # legible AS one.
+    if (principal or {}).get("em_dev_mode"):
+        return "anonymous@dev-no-auth"
+    for claim in ("orcid", "preferred_username", "email", "sub"):
+        value = str((principal or {}).get(claim) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+@catalog.post("/twins/merge", tags=["twins"])
+def merge_twins(payload: Dict[str, Any] = Body(...),
+                principal: Dict[str, Any] = AuthDependency) -> Dict[str, Any]:
+    """Declare that two keys name one twin. **No document is touched.**
+
+    E.D.'s decision of 1 October 2026, and the argument is ownership before it
+    is technique: the documents carrying the losing key belong to other people —
+    some published, some offline, some finished — so a merge that had to edit
+    them could only ever half-happen. See `docs/twin-merge.md`.
+
+    Authenticated, and the decider is recorded: an editorial act on shared
+    identity that nobody signed is one nobody can contest afterwards.
+    """
+    author = _merge_author(principal)
+    if not author:
+        raise HTTPException(status_code=403,
+                            detail="a merge must be signed: no identity in the token")
+    try:
+        outcome = aliases.merge(STORE,
+                                str(payload.get("loser") or ""),
+                                str(payload.get("winner") or ""),
+                                author=author)
+    except aliases.AliasError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {**outcome, "reindex_required": True}
+
+
+@catalog.post("/twins/unmerge", tags=["twins"])
+def unmerge_twins(payload: Dict[str, Any] = Body(...),
+                  principal: Dict[str, Any] = AuthDependency) -> Dict[str, Any]:
+    """Take a merge back — a FUNCTION, deliberately, and not a hand-edit.
+
+    «An operation whose reversal is a manual DELETE is reversible only in
+    theory.» Because a merge changed nothing but the alias table, removing the
+    alias restores the register exactly as it was.
+    """
+    if not _merge_author(principal):
+        raise HTTPException(status_code=403,
+                            detail="an un-merge must be signed: no identity in the token")
+    try:
+        outcome = aliases.unmerge(STORE, str(payload.get("loser") or ""))
+    except aliases.AliasError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {**outcome, "reindex_required": True}
+
+
+@catalog_public.get("/twins/aliases", tags=["twins"])
+def twin_aliases() -> Dict[str, Any]:
+    """Every merge on the register, with who decided and when.
+
+    Public, and that is the point: a merge is a claim about shared identity, so
+    who made it has to be readable by the people it affects.
+    """
+    current = aliases.table()
+    return {"count": len(current), "aliases": current}
+
+
 @catalog.post("/reindex", response_model=Reindexed, tags=["admin"])
 def reindex() -> Reindexed:
     """Rebuild the WHOLE index by re-reading the containers in the object store.
@@ -924,6 +1039,15 @@ def reindex() -> Reindexed:
             cards.append(em.study_metadata(doc, study_id=study_id))
         except Exception:
             unreadable.append(study_id)
+    # RE-READ THE ALIASES FIRST. They live in the object store precisely so a
+    # rebuild finds them, and the cards are keyed through `hdt_key` → so the
+    # table has to be current BEFORE the rows are written, or the rebuilt index
+    # would carry pre-merge keys and the merge would appear to have been undone
+    # by the very operation that exists to repair things.
+    try:
+        aliases.load(STORE)
+    except Exception as exc:                  # noqa: BLE001
+        print(f"[catalog] twin aliases unreadable during reindex: {exc}")
     count = INDEX.reindex(cards)
     return Reindexed(studies=count, unreadable=unreadable)
 

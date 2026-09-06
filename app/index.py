@@ -37,6 +37,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Protocol
 
+from .aliases import canonical_key
+
 #: What `search` understands. Named here so the two implementations answer the
 #: same questions, and so a caller can be told what it may ask.
 FILTERS = ("q", "author", "orcid", "license", "hc2", "hc1", "visibility", "kind")
@@ -66,6 +68,28 @@ class CatalogIndex(Protocol):
 
 # ── the two views ────────────────────────────────────────────────────────────
 
+def hdt_key(hc2: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The HC2 key of a twin — **the one place a twin key is read**.
+
+    The IRI when there is one, otherwise the node id (two catalogues of the same
+    monument that minted different node ids still belong together if they name
+    the same IRI), and then `canonical_key`, which is what makes a merge take
+    effect everywhere at once.
+
+    It exists because the key used to be derived in two places —
+    `group_by_hdt` and `_hdt_keys` — and canonicalising in two places is how
+    two places end up disagreeing: the grouping would show one twin while the
+    stored column still said two, and the difference would only appear after a
+    rebuild.
+    """
+    if not hc2:
+        return None
+    raw = hc2.get("iri") or hc2.get("id")
+    if not raw:
+        return None
+    return canonical_key(str(raw))
+
+
 def group_by_hdt(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The HDT view (spec §4): one heritage object, its N studies over time.
 
@@ -81,9 +105,7 @@ def group_by_hdt(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     groups: Dict[Any, Dict[str, Any]] = {}
     for card in cards:
         hc2 = card.get("hc2") or None
-        key = None
-        if hc2:
-            key = hc2.get("iri") or hc2.get("id")
+        key = hdt_key(hc2)
         bucket = groups.setdefault(key, {
             "hc2": hc2, "hc1": card.get("hc1"), "studies": []})
         bucket["hc1"] = _better_entity(bucket["hc1"], card.get("hc1"))
@@ -252,9 +274,13 @@ def _authors_blob(card: Dict[str, Any]) -> str:
 def _hdt_keys(card: Dict[str, Any]):
     hc2 = card.get("hc2") or {}
     hc1 = card.get("hc1") or {}
-    hc2_key = hc2.get("iri") or hc2.get("id")
+    # HC2 through `hdt_key`, so the stored column carries the CANONICAL key and
+    # a search by either spelling lands on the same row after a rebuild. HC1 is
+    # a different axis — which heritage ENTITY a study names — and a twin merge
+    # says nothing about it, so it is read as it always was.
+    hc2_key = hdt_key(hc2)
     hc1_key = hc1.get("iri") or hc1.get("id")
-    return (str(hc2_key) if hc2_key else None,
+    return (hc2_key,
             str(hc1_key) if hc1_key else None)
 
 
