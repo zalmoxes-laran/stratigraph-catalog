@@ -108,10 +108,92 @@ def test_the_static_mounts_revalidate_rather_than_go_stale():
         "every StratiGraph-native mount must revalidate"
 
 
-def test_the_views_read_the_PUBLIC_api_and_hold_no_token():
-    """A catalogue whose purpose is discovery answers an anonymous caller. This
-    page asks for nothing else — and holds no credential to ask with."""
-    js = (APP / "ui" / "catalog.js").read_text(encoding="utf-8")
-    assert "/studies?" in js
-    for sink in ("localStorage", "document.cookie", "Authorization"):
-        assert sink not in js, sink
+def test_the_views_read_the_PUBLIC_api_and_KEEP_NO_CREDENTIAL_ANYWHERE():
+    """A catalogue whose purpose is discovery answers an anonymous caller.
+
+    ── PERCHÉ QUESTA GUARDIA È CAMBIATA IL 7 OTTOBRE 2026, e cosa afferma adesso
+
+    Diceva `"Authorization" not in js`. Era giusta finché questa pagina non
+    aveva verbi: `DELETE /catalog/study/{id}` era scritto, testato e in piedi, e
+    **nessun browser lo poteva chiamare** — non per un bottone mancante, ma
+    perché la sola superficie che mostra uno studio non aveva modo di essere
+    qualcuno.
+
+    Allargare una guardia per far entrare del codice nuovo è il modo in cui una
+    guardia diventa una formalità, quindi il confine è stato spostato e non
+    togliesto, e adesso afferma **quattro cose invece di una**:
+
+    1. leggere resta ANONIMO — le due viste chiamano `/studies?` e non
+       richiedono niente;
+    2. nessuna credenziale su DISCO: né `localStorage`, né `sessionStorage`, né
+       un cookie. *(Il verificatore PKCE sta in `sessionStorage` e vive in
+       `auth.js`, che è vendorizzato e porta la propria ragione: sopravvive al
+       rimbalzo sull'IdP e viene cancellato appena il codice è speso.)*
+    3. nessun token in una URL — `list_studies` accetta `?token=` per i banchi
+       di prova, e una pagina che lo usasse metterebbe una credenziale nella
+       barra dell'indirizzo, nella cronologia e in ogni schermata condivisa;
+    4. `Authorization` compare in un posto solo, e in un'INTESTAZIONE.
+
+    ── E IL PAGLIAIO, DICHIARATO (§5)
+
+    È un sorgente letto come testo, perché questa pagina non si può importare —
+    tocca `document` al primo livello. Il falso positivo costruibile sarebbe un
+    COMMENTO che nomina uno dei recipienti: è la riga onesta che ha morso
+    davvero in `check-members` il 5 ottobre. Quindi la prosa si toglie prima, e
+    le prove qui sotto lo dimostrano invece di prometterlo.
+    """
+    raw = (APP / "ui" / "catalog.js").read_text(encoding="utf-8")
+    js = _senza_prosa(raw)
+
+    assert "/studies?" in js, "le due viste non chiamano più l'elenco pubblico"
+
+    #: 2 · niente su disco
+    for sink in ("localStorage", "sessionStorage", "document.cookie"):
+        assert sink not in js, (
+            f"{sink} in catalog.js: una credenziale su disco sopravvive alla "
+            f"persona alla tastiera")
+
+    #: 3 · niente token in una query, in nessuna delle grafie che qualcuno
+    #: scriverebbe
+    for shape in ("token=", "?token", "&token"):
+        assert shape not in js, f"un token in una URL ({shape})"
+
+    #: 4 · e l'unico `Authorization` è un'intestazione, in un posto solo
+    assert js.count("Authorization") == 1, (
+        f"«Authorization» compare {js.count('Authorization')} volte: il token "
+        f"è affare di UNA funzione")
+    at = js.index("Authorization")
+    assert "headers" in js[max(0, at - 400):at], (
+        "«Authorization» non è dentro le intestazioni di una richiesta")
+
+
+def test_E_LA_GUARDIA_QUI_SOPRA_MORDE_ANCORA_su_un_deposito_vero():
+    """La prima delle due prove: il caso che la fa scattare."""
+    finto = 'const t = 1;\nlocalStorage.setItem("sg.token", token);\n'
+    assert "localStorage" in _senza_prosa(finto)
+    finto_url = 'const u = `${BASE}/studies?token=${token}`;\n'
+    assert "token=" in _senza_prosa(finto_url)
+
+
+def test_E_NON_MORDE_PIU_su_un_commento_che_spiega_la_regola():
+    """La seconda: la riga onesta. È quella che il 5 ottobre ha fatto fallire un
+    recinto in EMStudio — il messaggio del recinto, scritto come commento."""
+    onesto = ('// il token NON va in localStorage e mai in ?token= nella URL\n'
+              'const x = 1;\n')
+    spogliato = _senza_prosa(onesto)
+    assert "localStorage" not in spogliato
+    assert "token=" not in spogliato
+
+
+def _senza_prosa(source: str) -> str:
+    """I commenti, tolti. **Igiene, non una forza**: non risponde niente su un
+    programma, e nei tre gemelli (`stratigraph-server/tests/sorgenti.py`,
+    `EMStudio/frontend/scripts/sorgenti.mjs`,
+    `stratigraph-chatbot/tests/sorgenti.py`) otto morsi su nove erano su codice
+    vero, non su commenti.
+
+    Questo repo è il QUARTO senza lettore condiviso, ed è scritto nel referto
+    del 7 ottobre invece di essere una quarta copia silenziosa.
+    """
+    import re as _re
+    return _re.sub(r"/\*[\s\S]*?\*/|//[^\n]*", "", source)

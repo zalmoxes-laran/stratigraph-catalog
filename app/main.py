@@ -156,6 +156,20 @@ class Health(BaseModel):
     studies: int = 0
     #: which apps this deployment can offer "open in" for
     open_in: Dict[str, Optional[str]] = Field(default_factory=dict)
+    #: WHERE THE NODE IS, when this deployment says — `EM_CATALOG_NODE_URL`.
+    #:
+    #: The mirror of `EM_CATALOG_PUBLIC`, which the node already reads to know
+    #: where THIS service is. Until 7 October 2026 only one direction existed,
+    #: so the node could link to the catalogue and the catalogue could not link
+    #: back — measured by asking the two documents for their anchors: the
+    #: catalogue's page had zero.
+    #:
+    #: NOT a default and not a guess. Same discipline as `handoff.CONSUMERS`'s
+    #: `web_env` next door: set it and the page offers the way back; leave it
+    #: unset and the page offers nothing, because a catalogue deployed on its
+    #: own has no node to return to and a button pointing at `localhost` is a
+    #: button that works only where it was written.
+    node: str = ""
 
 
 def _health() -> Health:
@@ -199,6 +213,7 @@ def _health() -> Health:
         index=index_describe(INDEX),
         studies=count,
         open_in=deeplink_describe(),
+        node=(os.environ.get("EM_CATALOG_NODE_URL") or "").strip().rstrip("/"),
     )
 
 
@@ -399,6 +414,86 @@ def remove_study(study_id: str) -> Dict[str, Any]:
 
 
 # ── search / list ─────────────────────────────────────────────────────────────
+
+#: SOLO con la barra. Senza, `redirect_slashes` di Starlette manda `/catalog` a
+#: `/catalog/` da sé — e una seconda rotta qui avrebbe risolto `./ui/` da una
+#: base diversa (`/catalog` → `/ui/`, che non è una rotta). Misurato.
+@catalog_public.get("/", include_in_schema=False)
+def catalogue_front_door() -> RedirectResponse:
+    """`/catalog/` → `/catalog/ui/`. Where this service's FACE is, said by the
+    service that owns it.
+
+    Added 2026-10-07 for a reason that is not convenience. The node publishes
+    each neighbour's public base (`node_services`, `EM_CATALOG_PUBLIC`), and a
+    bar built from that list pointed at `/catalog` — which answered nothing.
+    The alternative was for every consumer to append `/ui/`, i.e. for the
+    catalogue's page layout to become a fact four other pages carry. So the
+    base answers, and where the face lives stays this service's business.
+
+    Relative on purpose: behind a proxy under a prefix this resolves to the
+    proxied `/catalog/ui/` without anything here knowing the prefix.
+    """
+    return RedirectResponse("./ui/", status_code=302)
+
+
+class CatalogAuthConfig(BaseModel):
+    """What a BROWSER needs to sign in against this catalogue's realm.
+
+    **The twin of StratiGraph Server's `/v1/auth-config`, and a declared copy** —
+    the same relationship `app/auth.py` already has with that server's, and for
+    the same reason: this is a reference implementation that has to be readable
+    and deployable on its own.
+
+    Public by construction. An issuer and a client id are not secrets, and the
+    one thing that would be — a client secret — does not exist for this client:
+    the page is a public OIDC client and uses PKCE.
+
+    Why the catalogue needs one at all: until 7 October 2026 its page held no
+    token, «and that is deliberate» — a catalogue's purpose is discovery and an
+    anonymous caller must be answered. That stays true for reading. But
+    `DELETE /catalog/study/{id}` was written, tested, running, and callable by
+    nobody with a browser, because the only surface that shows a study had no
+    way to be anybody. Reading stays anonymous; acting needs a name.
+    """
+
+    issuer: str = ""
+    client_id: str = ""
+    redirect_uri: str = ""
+    authorization_endpoint: str = ""
+    token_endpoint: str = ""
+    end_session_endpoint: str = ""
+    scope: str = "openid profile email"
+    enforcing: bool = False
+
+
+@catalog_public.get("/auth-config", response_model=CatalogAuthConfig,
+                    tags=["meta"])
+def auth_config() -> CatalogAuthConfig:
+    """How a browser signs in to THIS catalogue. No secret, by construction.
+
+    `EM_CONSOLE_CLIENT_ID` — the same variable the node reads, and the same
+    public client (`em-console` by default). Deliberately the same: two names
+    for one client in one realm is the classic way a redirect URI ends up
+    granted on one and not the other, and the failure shows up at the last step
+    of somebody's sign-in.
+    """
+    settings = authenticator.settings
+    issuer = str(getattr(settings, "issuer", "") or "")
+    client_id = os.environ.get("EM_CONSOLE_CLIENT_ID", "em-console").strip()
+    return CatalogAuthConfig(
+        issuer=issuer,
+        client_id=client_id if issuer else "",
+        redirect_uri=os.environ.get("EM_CATALOG_REDIRECT_URI", "").strip(),
+        authorization_endpoint=(f"{issuer}/protocol/openid-connect/auth"
+                                if issuer else ""),
+        token_endpoint=(f"{issuer}/protocol/openid-connect/token"
+                        if issuer else ""),
+        end_session_endpoint=(f"{issuer}/protocol/openid-connect/logout"
+                              if issuer else ""),
+        scope=os.environ.get("EM_CONSOLE_SCOPE", "openid profile email").strip(),
+        enforcing=bool(getattr(settings, "enforcing", False)),
+    )
+
 
 @catalog_public.get("/studies", tags=["studies"])
 def list_studies(request: Request,

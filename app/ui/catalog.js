@@ -17,13 +17,43 @@
 const BASE = window.location.pathname.replace(/\/ui(\/.*)?$/, "");
 
 import { LOCALE, mountPicker, t } from "./i18n.js";
+//: VENDORIZZATI da `stratigraph-server/app/node_admin/` — vedi `sync-brand.sh`.
+//: Senza dipendenze, ed è la condizione che li rende copiabili. La stessa
+//: relazione dichiarata che `app/auth.py` ha col suo gemello di là.
+import * as oidc from "./auth.js";
+import { makeConfirm } from "./confirm.js";
 
 const $ = (id) => document.getElementById(id);
 let view = "flat";
 
+//: IL TOKEN, IN MEMORIA. La stessa regola di ogni altra faccia di questo
+//: ecosistema: un token in `localStorage` sopravvive alla persona alla
+//: tastiera. Qui costa poco tenerla — la pagina fa un verbo solo.
+let token = "";
+//: come questo catalogo vuole che un browser si presenti (`/auth-config`)
+let authConfig = null;
+//: dove sta il nodo, se questo deployment l'ha detto (`/health`, `node`)
+let nodeUrl = "";
+
+const { confirmTyped } = makeConfirm(t);
+
 async function get(path) {
-  const answer = await fetch(`${BASE}${path}`, {
-    headers: { Accept: "application/json" },
+  return await call(`${BASE}${path}`, "GET");
+}
+
+/** …e la stessa chiamata con un verbo. Il token viaggia in un'INTESTAZIONE e
+ *  mai in una query: `list_studies` accetta `?token=` per i banchi di prova, e
+ *  una pagina che lo usasse metterebbe una credenziale nella barra
+ *  dell'indirizzo, nella cronologia e in ogni schermata condivisa. */
+async function call(url, method, body) {
+  const answer = await fetch(url, {
+    method,
+    headers: {
+      Accept: "application/json",
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const text = await answer.text();
   let payload = null;
@@ -101,8 +131,57 @@ function studyCard(study) {
     twin.addEventListener("click", () => { showHdt(study.hc2.id); });
     open.append(twin);
   }
+
+  // ── RITIRARE · l'unico verbo di questa pagina, e l'unico irreversibile ────
+  //
+  // `DELETE /catalog/study/{id}` era scritto, testato e in piedi dal principio,
+  // e nessun browser lo poteva chiamare — non per un bottone che mancava: la
+  // sola superficie che mostra uno studio non aveva modo di essere qualcuno.
+  //
+  // Compare SOLO con una firma. Non nascosto per pudore: senza token la
+  // chiamata tornerebbe 401, e un bottone che si può premere e non può
+  // funzionare è peggio di uno che non c'è.
+  //
+  // E la conferma NON è quella dell'archiviazione. `confirmNamed` — la sola che
+  // questo ecosistema aveva — mostra il nome e chiede un OK, che è la cerimonia
+  // giusta per un atto che si può disfare (archiviare, revocare). Questo non si
+  // disfa: la docstring della rotta dice «Not a tombstone… withdrawing it is
+  // withdrawing the statement», e il contenitore va via con la scheda. Quindi
+  // il nome si SCRIVE (`confirmTyped`), che è l'unico gesto che non si fa per
+  // riflesso.
+  if (token) {
+    const drop = el("button", "btn withdraw", t("study.withdraw"));
+    drop.title = t("study.withdraw.title");
+    drop.addEventListener("click", () => void withdraw(study));
+    open.append(drop);
+  }
   box.append(open);
   return box;
+}
+
+async function withdraw(study) {
+  const name = study.id;
+  if (!confirmTyped(t("study.withdraw.ask"), name)) return;
+  try {
+    await call(`${BASE}/study/${encodeURIComponent(name)}`, "DELETE");
+  } catch (error) {
+    // LA FRASE DEL CATALOGO, non una nostra: un 403 dice chi può, un 404 dice
+    // che non c'era. Riscriverle in «non riuscito» butterebbe l'unica cosa utile.
+    say(t("study.withdraw.failed", { error: error.message }), true);
+    return;
+  }
+  say(t("study.withdrawn", { id: name }));
+  await (view === "hdt" ? showHdt() : showFlat());
+}
+
+/** Una frase sopra l'elenco. Questa pagina non ne aveva bisogno finché non
+ *  aveva un verbo: leggere non ha esiti da riportare. */
+function say(text, bad = false) {
+  const host = $("said");
+  if (!host) return;
+  host.textContent = text;
+  host.className = "lede" + (bad ? " err" : "");
+  host.hidden = !text;
 }
 
 /** One digital twin: its campaigns, most recent first. */
@@ -218,6 +297,9 @@ function paintStrings() {
   $("licence").setAttribute("aria-label", t("licence.label"));
   const any = $("licence-any");
   if (any) any.textContent = t("licence.any");
+  $("btn-signin").textContent = t("signin");
+  $("btn-signout").textContent = t("signout");
+  paintSession();
   // …and the active view draws itself again, from the query it already has.
   void (view === "hdt" ? showHdt() : showFlat());
 }
@@ -236,8 +318,79 @@ $("q").addEventListener("input", () => {
   typing = window.setTimeout(() => void (view === "hdt" ? showHdt() : showFlat()), 250);
 });
 
-// The language first, with its picker: everything after is drawn once, in the
-// right language, instead of flickering through English.
+// ── LA FIRMA ────────────────────────────────────────────────────────────────
+//
+// Leggere resta anonimo, ed è la premessa di questa pagina: «a catalogue whose
+// whole purpose is discovery must answer somebody who has not logged in».
+// Quello che cambia dal 7 ottobre 2026 è che AGIRE ha bisogno di un nome, e
+// l'unico atto di questa superficie è il ritiro di uno studio.
+
+function paintSession() {
+  const enforcing = Boolean(authConfig && authConfig.enforcing);
+  $("who").textContent = token ? t("signedin") : "";
+  //: NIENTE BOTTONE DOVE NON PUÒ FUNZIONARE. In modo sviluppo il catalogo non
+  //: controlla token: non c'è nessuno da essere, e offrire «Accedi» sarebbe una
+  //: promessa che il primo clic smentisce.
+  $("btn-signin").hidden = Boolean(token) || !enforcing;
+  $("btn-signout").hidden = !token;
+}
+
+$("btn-signin").addEventListener("click", async () => {
+  if (!authConfig) { say(t("noOidc"), true); return; }
+  await oidc.signIn(authConfig);
+});
+$("btn-signout").addEventListener("click", () => {
+  token = "";
+  paintSession();
+  //: …e la SESSIONE DEL REALM, non solo questa scheda: una firma apre più
+  //: facce sulla stessa origine, e un'uscita che dimenticasse il realm
+  //: lascerebbe il dispositivo dentro sulle altre.
+  if (authConfig && authConfig.end_session_endpoint) {
+    window.location.assign(oidc.signOutUrl(authConfig));
+  } else {
+    void (view === "hdt" ? showHdt() : showFlat());
+  }
+});
+
+// ── L'AVVIO ─────────────────────────────────────────────────────────────────
+//
+// La lingua per prima: tutto quello che segue è disegnato una volta, nella
+// lingua giusta, invece di lampeggiare passando dall'inglese.
 document.documentElement.lang = LOCALE;
 mountPicker($("lang"), paintStrings);
-paintStrings();
+
+async function boot() {
+  authConfig = await oidc.loadConfig(BASE).catch(() => null);
+
+  // Tornare DALL'IdP è la prima cosa da guardare: la pagina si sta caricando
+  // con `?code=…` addosso e non c'è altro da fare finché quello non è speso.
+  if (authConfig && oidc.returningFromIdp()) {
+    const result = await oidc.completeSignIn(authConfig);
+    if (result.ok) token = result.token || "";
+    else say(t("session.incomplete", { error: result.error }), true);
+  }
+  paintSession();
+
+  // LA BARRA. Dove sta il nodo lo dice questo servizio (`/health`, `node`), e
+  // quando nessuno l'ha detto non si offre niente: un catalogo installato da
+  // solo non ha un nodo a cui tornare.
+  try {
+    const salute = await get("/health");
+    nodeUrl = (salute && salute.node) || "";
+  } catch { nodeUrl = ""; }
+  if (nodeUrl) {
+    const { mountBar } = await import(`${nodeUrl}/admin/bar.js`)
+      .catch(() => ({ mountBar: null }));
+    if (mountBar) {
+      await mountBar($("node-bar"), {
+        //: le facce le chiede AL NODO, non a questo servizio
+        read: (path) => call(`${nodeUrl}/v1${path}`, "GET"),
+        operator: false, t,
+      });
+    }
+  }
+
+  paintStrings();
+}
+
+void boot();

@@ -390,3 +390,82 @@ def test_the_reading_page_itself_needs_no_token(client, realm):
         import pytest
         pytest.skip("no reading page bundled in this checkout")
     assert answer.status_code == 200
+
+
+# ── LA FACCIA DEL CATALOGO, e il verbo che nessun browser poteva chiamare ────
+#
+# 7 ottobre 2026. Due cose misurate prima di scrivere una riga:
+#
+#   `DELETE /catalog/study/{id}`   scritto, testato, in piedi — e chiamabile da
+#                                 nessuno con un browser
+#   la pagina                      ZERO ancore (chiesto al DOCUMENTO, non al
+#                                 testo) e nessun token: leggere era anonimo,
+#                                 agire era impossibile
+#
+# La ragione non era un bottone mancante: la sola superficie che mostra uno
+# studio non aveva modo di ESSERE QUALCUNO.
+
+
+def test_LA_RADICE_DEL_CATALOGO_porta_alla_sua_faccia(client):
+    """`/catalog/` → `/catalog/ui/`, deciso dal servizio che la possiede.
+
+    Il nodo pubblica la base pubblica di ogni vicino (`node_services`), e una
+    barra costruita da quella lista puntava a `/catalog`, che non rispondeva
+    niente. L'alternativa era che ogni consumatore aggiungesse `/ui/`, cioè che
+    la disposizione delle pagine di questo servizio diventasse un fatto che
+    altre quattro pagine portano addosso.
+    """
+    answer = client.get("/catalog/", follow_redirects=False)
+    assert answer.status_code == 302
+    #: RELATIVO: dietro un proxy con un prefisso questo risolve al
+    #: `/catalog/ui/` proxato senza che niente qui conosca il prefisso
+    assert answer.headers["location"] == "./ui/"
+    assert client.get("/catalog/", follow_redirects=True).status_code == 200
+
+
+def test_E_SENZA_LA_BARRA_ci_pensa_starlette(client):
+    """`/catalog` senza barra: `redirect_slashes` la aggiunge da sé.
+
+    Una seconda rotta qui avrebbe risolto `./ui/` da una base diversa —
+    `/catalog` + `./ui/` = `/ui/`, che non è una rotta. Misurato.
+    """
+    answer = client.get("/catalog", follow_redirects=False)
+    assert answer.status_code == 307
+    assert answer.headers["location"].endswith("/catalog/")
+
+
+def test_COME_UN_BROWSER_SI_PRESENTA_a_questo_catalogo(client):
+    """`/catalog/auth-config` — il gemello dichiarato di quello del nodo.
+
+    Pubblica per costruzione: un issuer e un client id non sono segreti, e la
+    cosa che lo sarebbe — un client secret — non esiste per questo client,
+    perché la pagina è un client OIDC pubblico e usa PKCE.
+    """
+    config = client.get("/catalog/auth-config").json()
+    assert set(config) == {"issuer", "client_id", "redirect_uri",
+                           "authorization_endpoint", "token_endpoint",
+                           "end_session_endpoint", "scope", "enforcing"}
+    #: NESSUN SEGRETO, e non per fortuna: non c'è nessun campo dove potrebbe
+    #: stare, e questa è l'asserzione che lo dice invece di sperarlo
+    assert not any("secret" in k for k in config)
+    #: in modo sviluppo non c'è realm, e la pagina allora non offre «Accedi»
+    #: invece di mandare qualcuno da nessuna parte
+    assert config["enforcing"] is False
+    assert config["issuer"] == "" and config["client_id"] == ""
+
+
+def test_DOVE_STA_IL_NODO_lo_dice_il_deployment_e_non_la_pagina(client,
+                                                                monkeypatch):
+    """`EM_CATALOG_NODE_URL` — il rispecchiamento di `EM_CATALOG_PUBLIC`, che il
+    nodo legge già per sapere dove sta QUESTO servizio.
+
+    Fino al 7 ottobre esisteva una direzione sola: il nodo sapeva mandarci, e da
+    qui non si tornava. NON un default e non un indovinello: un catalogo
+    installato da solo non ha un nodo a cui tornare, e un bottone puntato a
+    `localhost` è un bottone che funziona solo dove è stato scritto.
+    """
+    assert client.get("/catalog/health").json()["node"] == ""
+    monkeypatch.setenv("EM_CATALOG_NODE_URL", "https://em.example.org/em/")
+    #: …e la barra finale si perde, come ogni altro indirizzo di questo repo
+    assert client.get("/catalog/health").json()["node"] == \
+        "https://em.example.org/em"

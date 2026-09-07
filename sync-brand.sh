@@ -49,6 +49,27 @@ for f in favicon-deep-charcoal.svg favicon-off-white.svg; do
   cp "$SRC/logo/$f" "$DST/logo/"
 done
 
+# ── E I DUE MODULI CONDIVISI DEL GUSCIO ─────────────────────────────────────
+#
+# `auth.js` e `confirm.js` vengono da `stratigraph-server/app/node_admin/`, dove
+# sono la sorgente. Vengono COPIATI qui per la stessa ragione del marchio — un
+# browser non può importare un modulo da un'altra origine senza CORS, e mettere
+# CORS su un file di codice per risparmiare una copia è un cattivo scambio.
+#
+# Sono senza dipendenze, ed è la condizione che li rende copiabili: zero
+# `import`, solo API del browser. `confirm.js` prende il dizionario come
+# argomento (`makeConfirm(t)`) precisamente perché il catalogo ha il suo.
+#
+# La stessa relazione dichiarata che `app/auth.py` ha con quello del server:
+# è una copia, è un costo, ed è detto qui invece di essere scoperto dopo.
+SHELL_SRC="$(cd "$HERE/.." && pwd)/stratigraph-server/app/node_admin"
+if [ -f "$SHELL_SRC/auth.js" ]; then
+  cp "$SHELL_SRC/auth.js" "$SHELL_SRC/confirm.js" "$HERE/app/ui/"
+  SHELL_SYNCED="auth.js · confirm.js  (da stratigraph-server/app/node_admin)"
+else
+  SHELL_SYNCED="NON sincronizzati: stratigraph-server non è accanto a questo repo"
+fi
+
 fonts=$(ls -1 "$DST/fonts" | wc -l | tr -d ' ')
 bytes=$(du -sh "$DST" | cut -f1)
 version=$(grep -oE '^- `[0-9]+\.[0-9]+\.[0-9]+`' "$SRC/README.md" | head -1 \
@@ -59,4 +80,5 @@ synced the brand from $SRC:
   fonts            $fonts woff2 (Erode · IBM Plex Sans · IBM Plex Mono)
   logo             $(ls -1 "$DST/logo" | wc -l | tr -d ' ') svg
   vendored size    $bytes
+  shell modules    $SHELL_SYNCED
 EOF

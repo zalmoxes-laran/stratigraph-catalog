@@ -158,3 +158,41 @@ button:hover, .btn:hover { filter: brightness(1.08); }
 .lang { font: inherit; font-size: .82em; padding: .25rem .4rem;
         border-radius: var(--sg-radius-sm); border: 1px solid var(--sg-line);
         background: var(--sg-surface); color: var(--sg-text); }
+
+/* ── LA BARRA DEL NODO, e chi sei ───────────────────────────────────────────
+ *
+ * La stessa del server, con i token locali di questo foglio: `bar.js` disegna
+ * le stesse classi, e due fogli che le vestono uguale sono meglio di un foglio
+ * condiviso fra due origini.
+ *
+ * Nasce il 7 ottobre 2026 da una misura: chiesto al DOCUMENTO e non al testo,
+ * questa pagina aveva ZERO ancore. Il nodo sapeva mandarci; da qui non si
+ * tornava. */
+.node-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .25rem;
+  padding: .3rem 1.1rem; border-bottom: 1px solid var(--line);
+  background: var(--paper); font-size: var(--sg-text-sm);
+}
+.node-bar:empty { display: none; }
+.node-bar .bar-face {
+  padding: .2rem .45rem; border-radius: var(--sg-radius-sm);
+  color: var(--ink-soft); text-decoration: none; white-space: nowrap;
+}
+.node-bar .bar-face:hover { background: var(--card); color: var(--ink); }
+.node-bar .bar-offer { border: 1px solid var(--line); }
+.node-bar .bar-offer[data-state] { opacity: .65; }
+.node-bar .bar-quiet { color: var(--ink-soft); font-style: italic; }
+
+/* CHI SEI — nella barra in alto, accanto alle due viste. Leggere resta anonimo;
+ * il nome serve solo per l'unico verbo di questa pagina. */
+.who { color: var(--ink-soft); font-family: var(--sg-font-mono);
+       font-size: var(--sg-text-xs); }
+
+/* IL RITIRO — l'unico atto irreversibile di questa superficie, e non ha
+ * l'aspetto degli altri bottoni: `--bad` è il token che il tema dà a un
+ * rifiuto, e un verbo che cancella non deve somigliare a «Leggi». */
+.btn.withdraw {
+  color: var(--sg-terracotta); border-color: var(--sg-terracotta);
+  background: none;
+}
+.btn.withdraw:hover { background: var(--card); }
